@@ -5,3 +5,9 @@ gerald/*
 src/donald.lds
 makefile
 test/true/true
+*.cmi
+*.cma
+*.cmx
+*.cmo
+.*.d
+debuglog.txt

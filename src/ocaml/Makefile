@@ -1,0 +1,59 @@
+default: donald-ml.so
+
+CFLAGS += -std=gnu99 -g -fPIC
+CFLAGS += -fno-stack-protector
+OCAMLFIND ?= ocamlfind
+
+OCAML_STDLIB_ARCHIVE ?= /usr/lib/ocaml/stdlib.a /usr/lib/ocaml/libasmrun.a
+THIS_MAKEFILE := $(lastword $(MAKEFILE_LIST))
+
+OCAMLCFLAGS += -g
+OCAMLCFLAGS += -package batteries 
+OCAMLCFLAGS += -package bitstring,bitstring.syntax -syntax bitstring.syntax 
+OCAMLCFLAGS += -I $(ELF_LEM)/ocaml -I .
+OCAMLLDFLAGS += -linkpkg
+
+CFLAGS += -I.. # for donald.h
+
+# HACK: get the right libdir for ocaml
+OCAML_LIBDIR ?= $(shell dirname `which ocamlc`)/../lib/ocaml
+
+vpath %.lds $(dir $(THIS_MAKEFILE))/..
+vpath %.c $(dir $(THIS_MAKEFILE))/..
+vpath %.o $(dir $(THIS_MAKEFILE))/..  # for premain.o
+
+# FIXME: this breaks vpath rules. What's the "right thing" to do?
+vpath %.ml $(ELF_LEM)/ocaml
+
+OCAML_SRC := elf_header.ml elf_symbol_tables.ml elf_string_table.ml \
+        elf_program_header_table.ml elf_section.ml logging.ml error_monad.ml utility.ml \
+        elf.ml loading.ml
+
+OCAML_CMXS := $(patsubst %.ml,%.cmx,$(OCAML_SRC))
+OCAML_OBJS := $(patsubst %.cmx,%.o,$(OCAML_CMXS))
+
+OCAML_DEPS := $(patsubst %.ml,.%.d,$(OCAML_SRC))
+
+$(OCAML_DEPS): .%.d: %.ml
+	$(OCAMLFIND) ocamldep $(filter-out -g,$(OCAMLCFLAGS)) "$<" | sed 's^/[^ \t]*/^^' > "$@"
+
+DEPS += $(OCAML_DEPS)
+-include $(DEPS)
+
+# Bow to ocaml's stupid insistence on using its own ".cmx" object files
+$(OCAML_CMXS): %.cmx: %.ml
+	$(OCAMLFIND) ocamlopt -c -o "$@" $< $(OCAMLCFLAGS) $(OCAMLLDFLAGS) $(OCAMLLIBS)
+%.o: %.cmx
+	$(OCAMLFIND) ocamlopt -c -o "$@" $< $(OCAMLCFLAGS) $(OCAMLLDFLAGS) $(OCAMLLIBS)
+%.cmo: %.ml
+	$(OCAMLFIND) ocamlc -c -o "$@" $< $(OCAMLCFLAGS) $(OCAMLLDFLAGS) $(OCAMLLIBS)
+
+# FIXME: localize all global symbols except maybe _start?
+donald-ml.so: donald.lds $(OCAML_OBJS) premain.o externals.o entry.o load.o
+	USE_LD=ld.bfd $(CC) $(CFLAGS) -Wl,-Bsymbolic -nostdlib -nostartfiles -shared -o "$@" \
+            $(filter-out %.lds,$+) \
+            -Wl,-Bstatic $(LIBC_ARCHIVE) -L$(OCAML_LIBDIR) $(OCAML_LIBASMRUN_ARCHIVE) -Wl,-Bsymbolic \
+            -T $(filter %.lds,$+) #-Wl,-soname=ld-linux.so.2 
+
+clean:
+	rm -f donald-ml.so *.o *.cmi *.cmo *.cmx $(DEPS)
