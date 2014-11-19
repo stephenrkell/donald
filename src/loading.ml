@@ -1,9 +1,7 @@
-open Elf
 open Elf_header
-open Elf_section
 open Elf_program_header_table
-open Elf_symbol_tables
-open Error_monad
+open Elf_symbol_table
+open Error
 open Unix
 
 type mapping = {

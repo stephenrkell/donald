@@ -23,7 +23,7 @@ vpath %.c $(dir $(THIS_MAKEFILE))/..
 vpath %.o $(dir $(THIS_MAKEFILE))/..  # for premain.o
 
 # FIXME: this breaks vpath rules. What's the "right thing" to do?
-vpath %.ml $(ELF_LEM)/ocaml
+vpath %.ml $(ELF_LEM)
 
 OCAML_SRC := elf_header.ml elf_symbol_tables.ml elf_string_table.ml \
         elf_program_header_table.ml elf_section.ml logging.ml error_monad.ml utility.ml \
@@ -31,7 +31,7 @@ OCAML_SRC := elf_header.ml elf_symbol_tables.ml elf_string_table.ml \
 
 OCAML_CMXS := $(patsubst %.ml,%.cmx,$(OCAML_SRC))
 OCAML_OBJS := $(patsubst %.cmx,%.o,$(OCAML_CMXS))
-
+$(warning OCAML_CMXS is $(OCAML_CMXS))
 OCAML_DEPS := $(patsubst %.ml,.%.d,$(OCAML_SRC))
 
 $(OCAML_DEPS): .%.d: %.ml
@@ -41,7 +41,7 @@ DEPS += $(OCAML_DEPS)
 -include $(DEPS)
 
 # Bow to ocaml's stupid insistence on using its own ".cmx" object files
-$(OCAML_CMXS): %.cmx: %.ml
+%.cmx: %.ml
 	$(OCAMLFIND) ocamlopt -c -o "$@" $< $(OCAMLCFLAGS) $(OCAMLLDFLAGS) $(OCAMLLIBS)
 %.o: %.cmx
 	$(OCAMLFIND) ocamlopt -c -o "$@" $< $(OCAMLCFLAGS) $(OCAMLLDFLAGS) $(OCAMLLIBS)
