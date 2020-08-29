@@ -4,8 +4,13 @@
 #include <caml/alloc.h>
 #include <caml/memory.h>
 #include <caml/custom.h>
+#include <caml/callback.h>
 
+#include "uint32.h"
+#include "uint64.h"
 #include "donald.h"
+
+
 
 int main(int argc, char **argv)
 {
@@ -20,10 +25,12 @@ caml_enter(value entrypt_int64)
 	enter((void*) addr);
 }
 
-// external load_one: ((* base_addr : *) int64 * (* fd : *) int
-//             * (* vaddr : *) int64 * (* offset : *) int64
-//             * (* memsz : *) int64 * (* filesz : *) int64
-//             * (* read : *) bool * (* write : *) bool * (* exec : *) bool ) -> unit = "caml_load"
+/*
+   external load_one: ((* base_addr : *) int64 * (* fd : *) int
+               * (* vaddr : *) int64 * (* offset : *) int64
+               * (* memsz : *) int64 * (* filesz : *) int64
+               * (* read : *) bool * (* write : *) bool * (* exec : *) bool ) -> unit = "caml_load"
+*/
 CAMLprim value 
 caml_load(value bigtuple)
 {
@@ -42,12 +49,12 @@ caml_load(value bigtuple)
 	exec = Field(bigtuple, 8);
 
 	int ret = load_one_phdr(
-		Int64_val(base_addr),
+		Uint64_val(base_addr),
 		Int_val(fd),
-		Int64_val(vaddr),
-		Int64_val(offset),
-		Int64_val(memsz),
-		Int64_val(filesz),
+		Uint64_val(vaddr),
+		Uint64_val(offset),
+		Uint64_val(memsz),
+		Uint64_val(filesz),
 		Bool_val(read),
 		Bool_val(write),
 		Bool_val(exec)

@@ -1,7 +1,12 @@
 default: donald.so 
 
-CFLAGS += -std=gnu99 -g -fPIC
+include ../config.mk
+THIS_MAKEFILE := $(lastword $(MAKEFILE_LIST))
 
+export OCAMLFIND := 
+export OCAMLPATH := $(OCAML_PREFIX)/lib/ocaml:$(BATTERIES):$(BITSTRING):$(UINT):$(LEM_OCAML_LIB):$(OCAMLPATH)
+
+CFLAGS += -std=gnu99 -g -fPIC
 CFLAGS += -fno-stack-protector
 
 # Thanks to Dan Williams for the recipes that my link commands were based on.
@@ -27,8 +32,10 @@ OBJS := premain.o main.o entry.o load.o
 C_DEPS := $(patsubst %.o,.%.d,$(OBJS))
 DEPS := $(C_DEPS)
 
+FINDLIB_PREFIX ?= /usr/local
+
 # OCaml stuff follows
-OCAMLFIND ?= ocamlfind
+OCAMLFIND ?= $(FINDLIB_PREFIX)/bin/ocamlfind
 OCAMLDEP ?= $(OCAMLFIND) ocamldep.opt
 OCAMLC ?= $(OCAMLFIND) ocamlc.opt
 OCAMLOPT ?= $(OCAMLFIND) ocamlopt.opt
@@ -46,15 +53,13 @@ CAMLP4FLAGS += bitstring.cma
 CAMLP4FLAGS += bitstring_persistent.cma
 CAMLP4FLAGS += pa_bitstring.cmo
 
-OCAMLCFLAGS += -g
+OCAMLOPTFLAGS += -g -fPIC
 # translate OCAMLPATH into -I options
 OCAMLCFLAGS += $(patsubst %,-I %,$(subst :, ,$(OCAMLPATH)))
-#OCAMLCFLAGS += -package batteries 
-#OCAMLCFLAGS += -package bitstring,bitstring.syntax -syntax bitstring.syntax 
 OCAMLCFLAGS += -pp 'env CAML_LD_LIBRARY_PATH=$(BITSTRING) camlp4o $(CAMLP4FLAGS)'
 OCAMLCFLAGS += -I $(ELF_LEM)/ocaml -I $(ELF_LEM) -I .
+#$(warning OCAMLOPTFLAGS are $(OCAMLOPTFLAGS))
 #$(warning OCAMLCFLAGS are $(OCAMLCFLAGS))
-# OCAMLLDFLAGS += -linkpkg
 
 # HACK: get the right libdir for ocaml
 OCAML_LIBDIR ?= $(shell dirname `which ocamlc`)/../lib/ocaml
@@ -64,18 +69,24 @@ vpath %.ml $(ELF_LEM)
 vpath %.ml $(UINT)
 vpath %.ml $(BITSTRING)
 
+# We also link against the archives of these libraries
+vpath %.a $(UINT)
+vpath %.a $(BITSTRING)
+vpath %.a $(BATTERIES)
+
+
 OCAML_SRC := $(filter-out sail_interface.ml,$(filter-out pre_main.ml,$(notdir $(wildcard $(ELF_LEM)/*.ml)))) $(wildcard *.ml)
-$(warning OCAML_SRC is $(OCAML_SRC))
+# $(warning OCAML_SRC is $(OCAML_SRC))
 
-OCAML_CMXS := $(patsubst %.ml,%.cmx,$(OCAML_SRC))
-OCAML_OBJS := $(patsubst %.cmx,%.o,$(OCAML_CMXS))
+OCAML_CMX := $(patsubst %.ml,%.cmx,$(OCAML_SRC))
+OCAML_OBJ := $(patsubst %.cmx,%.o,$(OCAML_CMX))
 # $(warning OCAML_CMXS is $(OCAML_CMXS))
-OCAML_DEPS := $(patsubst %.ml,.%.d,$(OCAML_SRC))
-DEPS += $(OCAML_DEPS)
+OCAML_DEP := $(patsubst %.ml,.%.d,$(OCAML_SRC))
+DEPS += $(OCAML_DEP)
 
-$(OCAML_DEPS): .%.d: %.ml
+$(OCAML_DEP): .%.d: %.ml
 	$(OCAMLDEP) -native $(filter-out -g,$(OCAMLCFLAGS)) "$<" > "$@"
-#$(OCAML_DEPS): .%.d: %.ml
+#$(OCAML_DEP): .%.d: %.ml
 #	$(OCAMLDEP) -native $(filter-out -g,$(OCAMLCFLAGS)) "$<" | sed 's^/[^ \t]*/^^' > "$@"
 
 $(C_DEPS): .%.d: %.c
@@ -106,15 +117,51 @@ clean:
 
 # Bow to ocaml's stupid insistence on using its own ".cmx" object files
 %.cmx: %.ml
-	$(OCAMLOPT) -c -o "$@" $(OCAMLCFLAGS) $< $(OCAMLLDFLAGS) $(OCAMLLIBS)
+	which ocamlopt.opt
+	$(OCAMLOPT) -c -o "$@" $(OCAMLCFLAGS) $(OCAMLOPTFLAGS) $< 
 %.o: %.cmx
-	$(OCAMLOPT) -c -o "$@" $(OCAMLCFLAGS) $< $(OCAMLLDFLAGS) $(OCAMLLIBS)
+	$(OCAMLOPT) -c -o "$@" $(OCAMLCFLAGS) $(OCAMLOPTFLAGS) $< 
 %.cmo: %.ml
-	$(OCAMLC) -c -o "$@" $< $(OCAMLCFLAGS) $(OCAMLLDFLAGS) $(OCAMLLIBS)
+	$(OCAMLC) -c -o "$@" $< $(OCAMLCFLAGS)
+	
+# make archives for batteries, uint
+#batteries.a: $(patsubst %.ml,%.o,$(wildcard $(BATTERIES)/*.ml))
+#	ar r "$@" $+
+#bitstring.a: $(patsubst %.ml,%.o,$(wildcard $(BITSTRING)/*.ml))
+#	ar r "$@" $+
+#uint.a: $(patsubst %.ml,%.o,$(wildcard $(BATTERIES)/*.ml))
+#	ar r "$@" $+
+
+OCAML_A := $(BATTERIES)/batteries.a $(BITSTRING)/bitstring.a $(UINT)/uint.a
+OCAMLLIBS_CMXA := $(BATTERIES)/batteries.cmxa $(BITSTRING)/bitstring.cmxa $(UINT)/uint.cmxa
+
+# If I pass it OCAML_OBJ, it hardly writes anything.
+# If I pass it OCAML_CMXS, it complains about a load of missing stuff.
+# I think I have to make it not complain
+donald-ml.o: $(OCAML_CMX) $(wildcard $(LEM_OCAML_LIB)/*.cmx) $(OCAMLLIBS_CMXA)
+	$(OCAMLOPT) -o "$@" -output-obj $+
 
 # FIXME: localize all global symbols except maybe _start?
-donald-ml.so: donald.lds $(OCAML_OBJS) premain.o externals.o entry.o load.o
-	USE_LD=ld.bfd $(CC) $(CFLAGS) -Wl,-Bsymbolic -nostdlib -nostartfiles -shared -o "$@" \
+donald-ml.so: donald.lds $(OCAML_OBJS) premain.o ocaml-externals.o entry.o load.o donald-ml.o
+	USE_LD=ld.bfd $(CC) $(CFLAGS) -Wl,-z,muldefs \
+	    -Wl,-Bsymbolic -nostdlib -nostartfiles -shared -o "$@" \
             $(filter-out %.lds,$+) \
-            -Wl,-Bstatic $(LIBC_ARCHIVE) -L$(OCAML_LIBDIR) $(OCAML_LIBASMRUN_ARCHIVE) -Wl,-Bsymbolic \
-            -T $(filter %.lds,$+) #-Wl,-soname=ld-linux.so.2 
+            -Wl,-Bstatic \
+	    -L$(OCAML_LIBDIR) \
+	    $(LIBC_ARCHIVE) \
+	    -Wl,-Bsymbolic \
+            -T $(filter %.lds,$+) #-Wl,-soname=ld-linux.so.2
+	readelf -Ws "$@" | grep 'UND'
+	
+
+donald-startup.s: $(OCAML_CMX)
+	$(OCAMLOPT) -dstartup -o donald-startup-dummy $(OCAML_CMX) || true
+	mv $$( ls -1t camlstartup*.s | head -n1 ) "$@"
+	rm -f donald-startup-dummy
+
+dummy.ml:
+	touch "$@"
+
+donald-ml-hack.so.startup.s: donald.lds dummy.ml $(OCAML_OBJ) premain.o ocaml-externals.o entry.o load.o batteries.a bitstring.a uint.a libuint_stubs.a libbitstring.a
+	USE_LD=ld.bfd  ocamlopt.opt dummy.ml -S -dstartup -ccopt -I/var/local/stephen/work/devel/donald.hg/contrib/system-v-abi/src/src_elf_libraries/uint/_build/lib//../../lib  -ccopt -fPIC  -ccopt -fno-stack-protector  -ccopt -Wl,-Bsymbolic  -ccopt -nostdlib  -ccopt -nostartfiles  -ccopt -shared  -o "donald-ml-hack.so"  bitstring_local.o bytestring.o default_printing.o elf_executable_file2.o elf_executable_file3.o elf_file1.o elf_header.o elf_interpreted_segment.o elf_linking_file2.o elf_linking_file3.o elf_program_header_table.o elf_relocation.o elf_section_header_table.o elf_symbol_table.o elf_types.o endianness.o error.o main_elf.o missing_pervasives.o ml_bindings.o ml_bindings_camlp4_sugared.o show.o string_table.o utility.o loading.o premain.o ocaml-externals.o entry.o load.o /var/local/stephen/work/devel/donald.hg/contrib/system-v-abi/src/src_elf_libraries/batteries/_build/src/batteries.a /var/local/stephen/work/devel/donald.hg/contrib/system-v-abi/src/src_elf_libraries/bitstring/bitstring.a /var/local/stephen/work/devel/donald.hg/contrib/system-v-abi/src/src_elf_libraries/uint/_build/lib/uint.a /var/local/stephen/work/devel/donald.hg/contrib/system-v-abi/src/src_elf_libraries/uint/_build/lib/libuint_stubs.a /var/local/stephen/work/devel/donald.hg/contrib/system-v-abi/src/src_elf_libraries/bitstring/libbitstring.a -ccopt -Wl,-Bstatic /usr/local/src/uClibc-0.9.33.2/lib/libc.a  -ccopt -L/usr/local/bin/../lib/ocaml  /var/local/stephen/work/devel/donald.hg/contrib/ocaml-4.01.0/install/lib/ocaml/libasmrun.a  -ccopt -Wl,-Bsymbolic  -ccopt -T -ccopt donald.lds; echo "Return value was $$?"
+

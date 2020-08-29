@@ -11,3 +11,7 @@ test/true/true
 *.cmo
 .*.d
 debuglog.txt
+contrib/findlib.conf
+contrib/lem/*
+contrib/ocaml-4.01.0.tar.gz
+contrib/ocaml-4.01.0/*

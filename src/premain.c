@@ -57,6 +57,30 @@ static inline void __attribute__((always_inline)) preinit(unsigned char *sp_on_e
 	bootstrap_relocate(base_addr);
 }
 
+static inline void __attribute__((always_inline)) 
+do_one_rela(ElfW(Rela) *p_rela, unsigned char *at_base, ElfW(Sym) *p_dynsym)
+{
+#define SYMADDR(r_info) (p_dynsym[ELF64_R_SYM((r_info))].st_value)
+	Elf64_Addr *reloc_addr = (Elf64_Addr *)(at_base + p_rela->r_offset);
+	switch (ELF64_R_TYPE(p_rela->r_info))
+	{
+		case R_X86_64_RELATIVE: // no symbol addr, because we're RELATIVE
+			*reloc_addr = (Elf64_Addr)(at_base + p_rela->r_addend); 
+			break;
+		case R_X86_64_64: 
+			*reloc_addr = (Elf64_Addr)(at_base + SYMADDR(p_rela->r_info) + p_rela->r_addend);
+			break;
+		case R_X86_64_JUMP_SLOT:
+		case R_X86_64_GLOB_DAT:
+			*reloc_addr = (Elf64_Addr)(at_base + SYMADDR(p_rela->r_info));
+			break;
+		default: 
+			/* We can't report an error in any useful way here. */
+			break;
+	}
+#undef SYMADDR
+}
+
 static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned char *at_base)
 {
 	/* We scan _DYNAMIC to get our own symbol table. HACK: we manually relocate &_DYNAMIC
@@ -65,9 +89,11 @@ static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned ch
 	ElfW(Sym) *dynsym_start = NULL;
 	unsigned long dynsym_nsyms = 0;
 	ElfW(Rela) *rela_dyn_start = NULL;
+	ElfW(Rela) *rela_plt_start = NULL;
 	unsigned long rela_dyn_sz = 0;
 	unsigned long rela_dyn_entsz = 0;
 	unsigned long rela_dyn_nents = 0;
+	unsigned long rela_plt_sz = 0;
 	while (p_dyn->d_tag != DT_NULL)
 	{
 		if (p_dyn->d_tag == DT_SYMTAB) dynsym_start = (void*)(at_base + p_dyn->d_un.d_ptr);
@@ -75,6 +101,8 @@ static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned ch
 		else if (p_dyn->d_tag == DT_RELA) rela_dyn_start = (void *)(at_base + p_dyn->d_un.d_ptr);
 		else if (p_dyn->d_tag == DT_RELASZ) rela_dyn_sz = p_dyn->d_un.d_val;
 		else if (p_dyn->d_tag == DT_RELAENT) rela_dyn_entsz = p_dyn->d_un.d_val;
+		else if (p_dyn->d_tag == DT_JMPREL) rela_plt_start = (void *)(at_base + p_dyn->d_un.d_ptr);
+		else if (p_dyn->d_tag == DT_PLTRELSZ) rela_plt_sz = p_dyn->d_un.d_val;
 		++p_dyn;
 	}
 	if (rela_dyn_entsz > 0) rela_dyn_nents = rela_dyn_sz / rela_dyn_entsz;
@@ -89,14 +117,15 @@ static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned ch
 	ElfW(Rela) *p_rela = rela_dyn_start;
 	for (int i = 0; i < rela_dyn_nents; ++i)
 	{
-		ElfW(Rela) *p_rela = rela_dyn_start + i;
-		if (ELF64_R_TYPE(p_rela->r_info) == R_X86_64_RELATIVE)
-		{
-			// r_offset is the virtual address of the reloc site, in the library's vaddr space
-			Elf64_Addr *reloc_addr = (Elf64_Addr *)(at_base + p_rela->r_offset);
-			*reloc_addr = (Elf64_Addr)(at_base + p_rela->r_addend); // no symbol addr, because we're RELATIVE
-		}
+		do_one_rela(rela_dyn_start + i, at_base, dynsym_start);
 	}
+	p_rela = rela_plt_start;
+	/* HACK: we assume PLT contains rela, not rel, for now. */
+	for (int i = 0; i < (rela_plt_sz / sizeof (Elf64_Rela)); ++i)
+	{
+		do_one_rela(rela_plt_start + i, at_base, dynsym_start);
+	}
+	/* Also do .rela.plt */
 }
 
 /* The function prologue pushes rbp on entry, decrementing the stack
