@@ -13,12 +13,15 @@
 /* object-local  */
 #define HIDDEN __attribute__((visibility("hidden")))
 
-int *p_argc HIDDEN;
-char **argv HIDDEN;
-char **envp HIDDEN;
-ElfW(Dyn) *p_dyn HIDDEN;
-ElfW(auxv_t) *p_auxv HIDDEN;
+#define PAGE_ADJUST(n) (((uintptr_t)(n)) % page_size)
 
-int main(void) HIDDEN;
+extern char **environ HIDDEN;
+extern ElfW(Dyn) *p_dyn HIDDEN;
+extern ElfW(auxv_t) *p_auxv HIDDEN;
+extern unsigned long page_size HIDDEN;
 
+int main(int argc, char **argv) HIDDEN;
+int load_one_phdr(unsigned long base_addr, int fd, unsigned long vaddr, unsigned long offset,
+	unsigned long memsz, unsigned long filesz, _Bool read, _Bool write, _Bool exec) HIDDEN;
+void enter(void *entry_point) __attribute__((noreturn)) HIDDEN;
 #endif

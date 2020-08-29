@@ -5,18 +5,14 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <err.h>
+#include <sys/syscall.h>   /* For SYS_xxx definitions */
 #include "donald.h"
 
-// #define die(s, ...) do { fprintf(stderr, "donald: " s , ##__VA_ARGS__); return -1; } while(0)
-#define die(s, ...) do { fwrite("donald: " s , sizeof "donald: " s, 1, stderr); return -1; } while(0)
+#define die(s, ...) do { fprintf(stderr, "donald: " s , ##__VA_ARGS__); return -1; } while(0)
+// #define die(s, ...) do { fwrite("donald: " s , sizeof "donald: " s, 1, stderr); return -1; } while(0)
 
-#define PAGE_SIZE 4096
-#define PAGE_ADJUST(n) (((uintptr_t)(n)) % PAGE_SIZE)
-
-int main(void)
+int main(int argc, char **argv)
 {
-	int argc = *p_argc;
-	
 	// we need an argument
 	if (argc < 2) { die("no program specified\n"); }
 	
@@ -74,60 +70,21 @@ int main(void)
 	for (unsigned i = 0; i < p_hdr->e_phnum; ++i)
 	{
 		if (p_phdr[i].p_type == PT_LOAD)
-		{
-			// mmap it
-			int prot = 0;
-			if (p_phdr[i].p_flags & PF_R) prot |= PROT_READ;
-			if (p_phdr[i].p_flags & PF_W) prot |= PROT_WRITE;
-			if (p_phdr[i].p_flags & PF_X) prot |= PROT_EXEC;
-			
-			// we either have filesz == 0 or filesz == memsz 
-			// ... or memsz > filesz and extends beyond the end of the file
-			// ... or offset + filesz hits a page boundary and memsz is bigger
-			void *ret;
-			if (p_phdr[i].p_filesz == 0)
+		{	
+			_Bool read = (p_phdr[i].p_flags & PF_R);
+			_Bool write = (p_phdr[i].p_flags & PF_W);
+			_Bool exec = (p_phdr[i].p_flags & PF_X);
+
+			ret = load_one_phdr(base_addr, exe_fd, p_phdr[i].p_vaddr,
+				p_phdr[i].p_offset, p_phdr[i].p_memsz, p_phdr[i].p_filesz, read, write, exec);
+			switch (ret)
 			{
-				char *addr = (char*) base_addr + p_phdr[i].p_vaddr;
-				ret = mmap(addr - PAGE_ADJUST(addr), p_phdr[i].p_memsz + PAGE_ADJUST(addr),
-					prot, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-			} 
-			else if (p_phdr[i].p_filesz == p_phdr[i].p_memsz)
-			{
-				char *addr = (char*) base_addr + p_phdr[i].p_vaddr;
-				ret = mmap(addr - PAGE_ADJUST(addr), p_phdr[i].p_memsz + PAGE_ADJUST(addr),
-					prot, MAP_FIXED | MAP_PRIVATE, exe_fd, p_phdr[i].p_offset - PAGE_ADJUST(addr));
-			} 
-			else if (p_phdr[i].p_memsz > p_phdr[i].p_filesz
-				 && p_phdr[i].p_offset + p_phdr[i].p_filesz == mapped_size)
-			{
-				// we can map more than filesz if we're beyond the end of the file
-				char *addr = (char*) base_addr + p_phdr[i].p_vaddr;
-				ret = mmap(addr - PAGE_ADJUST(addr), p_phdr[i].p_memsz + PAGE_ADJUST(addr),
-					prot, MAP_FIXED | MAP_PRIVATE, exe_fd, p_phdr[i].p_offset - PAGE_ADJUST(addr));
-			} 
-			else if (p_phdr[i].p_memsz > p_phdr[i].p_filesz
-				 && (p_phdr[i].p_offset + p_phdr[i].p_filesz) % PAGE_SIZE == 0)
-			{
-				// two mappings: one as usual for the filesz...
-				char *addr = (char*) base_addr + p_phdr[i].p_vaddr;
-				ret = mmap(addr - PAGE_ADJUST(addr), p_phdr[i].p_filesz + PAGE_ADJUST(addr),
-					prot, MAP_FIXED | MAP_PRIVATE, exe_fd, p_phdr[i].p_offset - PAGE_ADJUST(addr));
-				if (ret != MAP_FAILED)
-				{
-					// one anonymous for the remainder of the memsz
-					addr = (char*) base_addr + p_phdr[i].p_vaddr + p_phdr[i].p_filesz;
-					// assert(PAGE_ADJUST(addr) == 0);
-					ret = mmap(addr, p_phdr[i].p_memsz - p_phdr[i].p_filesz,
-						prot, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-				}
+				case 2: die("file %s has bad PT_LOAD filesz/memsz (phdr index %d)\n", 
+						argv[argv_program_ind], i);
+				case 1: die("could not create mapping for PT_LOAD phdr index %d\n", i);
+				default:
+					break;
 			}
-			else
-			{
-				die("file %s has bad PT_LOAD filesz/memsz (phdr index %d)\n", 
-							argv[argv_program_ind], i);
-			}
-			
-			if (ret == MAP_FAILED) die("could not create mapping for PT_LOAD phdr index %d\n", i);
 		}
 	}
 	
@@ -141,8 +98,5 @@ int main(void)
 	close(exe_fd);
 	
 	// jump to the entry point
-	__asm__("jmpq *%0\n" : : "r"(entry_point));
-			
-	// we shouldn't have to return, but...
-	return 0;
+	enter((void*) entry_point);
 }
