@@ -6,16 +6,37 @@
 #include <sys/mman.h>
 #include <err.h>
 #include <sys/syscall.h>   /* For SYS_xxx definitions */
+#include <asm/prctl.h> /* for ARCH_SET_FS */
+#include <assert.h>
 #include "donald.h"
+#include "relf.h" /* for auxv things */
 
 #define die(s, ...) do { fprintf(stderr, "donald: " s , ##__VA_ARGS__); return -1; } while(0)
 // #define die(s, ...) do { fwrite("donald: " s , sizeof "donald: " s, 1, stderr); return -1; } while(0)
+
+static char fake_tls[4096]; // FIXME: better way to size this
+void __init_tls(size_t *auxv)
+{
+	syscall(SYS_arch_prctl, ARCH_SET_FS, (unsigned long) fake_tls);
+	*(void**)fake_tls = &fake_tls[0];
+}
+
+void __init_libc(char **envp, char *pn); // musl-internal API
+int __init_tp(void *p);
 
 int main(int argc, char **argv)
 {
 	// we need an argument
 	if (argc < 2) { die("no program specified\n"); }
 	
+	/* We use musl as our libc. That means there are (up to) two libc instances
+	 * in the process! Before we do any libc calls, make sure musl's state
+	 * is initialized. We use librunt to get the env/arg values.
+	 * FIXME: the librunt call is not necessary as we can thread the auxv
+	 * through from our premain... we are the ld.so, after all. */
+	struct auxv_limits limits = get_auxv_limits(p_auxv);
+	__init_libc((char**) limits.env_vector_start, (char*) *limits.argv_vector_start);
+
 	struct stat proc_exe;
 	struct stat argv0;
 	int ret = stat("/proc/self/exe", &proc_exe);

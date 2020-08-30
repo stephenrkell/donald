@@ -5,6 +5,7 @@ THIS_MAKEFILE := $(lastword $(MAKEFILE_LIST))
 
 CFLAGS += -std=gnu99 -g -fPIC
 CFLAGS += -fno-stack-protector
+CFLAGS += -I$(LIBRUNT)/include -DRELF_DEFINE_STRUCTURES
 
 # Thanks to Dan Williams for the recipes that my link commands were based on.
 # http://www.cs.virginia.edu/~dww4s/articles/ld_linux.html
