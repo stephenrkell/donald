@@ -14,6 +14,8 @@
 #define HIDDEN __attribute__((visibility("hidden")))
 
 #define PAGE_ADJUST(n) (((uintptr_t)(n)) % page_size)
+#define ROUND_UP_TO(mult, v) \
+    ((mult) * (((v) + ((mult)-1)) / (mult)))
 
 extern char **environ HIDDEN;
 extern ElfW(Dyn) *p_dyn HIDDEN;

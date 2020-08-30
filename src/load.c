@@ -17,23 +17,25 @@ int load_one_phdr(unsigned long base_addr, int fd, unsigned long vaddr, unsigned
 	if (filesz == 0)
 	{
 		char *addr = (char*) base_addr + vaddr;
-		ret = mmap(addr - PAGE_ADJUST(addr), memsz + PAGE_ADJUST(addr),
+		ret = mmap(addr - PAGE_ADJUST(addr),
+			ROUND_UP_TO(page_size, memsz + PAGE_ADJUST(addr)),
 			prot, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 		return (ret == MAP_FAILED);
-	} 
+	}
 	else if (memsz >= filesz)
 	{
 		// up to two mappings: one as usual for the filesz...
 		char *addr = (char*) base_addr + vaddr;
-		ret = mmap(addr - PAGE_ADJUST(addr), filesz + PAGE_ADJUST(addr),
+		size_t mapping_size = ROUND_UP_TO(page_size, filesz + PAGE_ADJUST(addr));
+		ret = mmap(addr - PAGE_ADJUST(addr),
+			mapping_size,
 			prot, MAP_FIXED | MAP_PRIVATE, fd, offset - PAGE_ADJUST(addr));
 		
-		if (ret != MAP_FAILED && memsz > filesz)
+		if (ret != MAP_FAILED && mapping_size - PAGE_ADJUST(addr) < memsz)
 		{
-			// one anonymous for the remainder of the memsz
-			addr = (char*) base_addr + vaddr + filesz;
 			// assert(PAGE_ADJUST(addr) == 0);
-			ret = mmap(addr, memsz - filesz,
+			ret = mmap(addr - PAGE_ADJUST(addr) + mapping_size,
+				/*ROUND_UP_TO(page_size, */memsz - (mapping_size - PAGE_ADJUST(addr))/*)*/,
 				prot, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 		}
 		return (ret == MAP_FAILED);
