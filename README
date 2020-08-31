@@ -1,1 +1,10 @@
 donald -- the Mickey Mouse of dynamic linkers
+
+donald doesn't really do dynamic linking... it's just the groundwork. In 
+particular, it doesn't load depended-on libraries or apply relocations. It 
+also doesn't implement TLS, except in a hacky way so that the initial thread 
+can use TLS variables like errno.
+
+It does do bootstrap relocation, auxv futzing, and mapping the segments of 
+the executable. That's enough groundwork to be approachable for study 
+purposes. I may expand it, but perhaps not much.
