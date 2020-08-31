@@ -9,7 +9,6 @@
 #include <asm/prctl.h> /* for ARCH_SET_FS */
 #include <assert.h>
 #include "donald.h"
-#include "relf.h" /* for auxv things */
 
 #define die(s, ...) do { fprintf(stderr, "donald: " s , ##__VA_ARGS__); return -1; } while(0)
 // #define die(s, ...) do { fwrite("donald: " s , sizeof "donald: " s, 1, stderr); return -1; } while(0)
@@ -34,8 +33,7 @@ int main(int argc, char **argv)
 	 * is initialized. We use librunt to get the env/arg values.
 	 * FIXME: the librunt call is not necessary as we can thread the auxv
 	 * through from our premain... we are the ld.so, after all. */
-	struct auxv_limits limits = get_auxv_limits(p_auxv);
-	__init_libc((char**) limits.env_vector_start, (char*) *limits.argv_vector_start);
+	__init_libc((char**) environ, *argv);
 
 	struct stat proc_exe;
 	struct stat argv0;
