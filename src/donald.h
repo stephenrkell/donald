@@ -28,10 +28,15 @@
 #define ROUND_UP_TO(mult, v) \
     ((mult) * (((v) + ((mult)-1)) / (mult)))
 
+#ifndef DONALD_NAME
+#define DONALD_NAME "donald"
+#endif
+
 extern char **environ HIDDEN;
 extern ElfW(Dyn) *p_dyn HIDDEN;
 extern ElfW(auxv_t) *p_auxv HIDDEN;
 extern unsigned long page_size HIDDEN;
+extern void *rsp_on_entry HIDDEN;
 
 int main(int argc, char **argv) HIDDEN;
 int load_one_phdr(unsigned long base_addr, int fd, unsigned long vaddr, unsigned long offset,
