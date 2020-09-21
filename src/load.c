@@ -1,5 +1,6 @@
 #include "donald.h"
 #include <sys/mman.h>
+#include <assert.h>
 
 int load_one_phdr(unsigned long base_addr, int fd, unsigned long vaddr, unsigned long offset,
 	unsigned long memsz, unsigned long filesz, _Bool read, _Bool write, _Bool exec)
@@ -28,13 +29,20 @@ int load_one_phdr(unsigned long base_addr, int fd, unsigned long vaddr, unsigned
 		ret = mmap(addr - PAGE_ADJUST(addr), filesz + PAGE_ADJUST(addr),
 			prot, MAP_FIXED | MAP_PRIVATE, fd, offset - PAGE_ADJUST(addr));
 		
-		if (ret != MAP_FAILED && memsz > filesz)
+		if (ret != MAP_FAILED)
 		{
 			// one anonymous for the remainder of the memsz
-			addr = (char*) base_addr + vaddr + filesz;
+			uintptr_t file_end_addr = (uintptr_t) base_addr + vaddr + filesz;
+			// we have to adjust the start addr to the *next* page
+			off_t next_page_adjust = page_size - (PAGE_ADJUST(file_end_addr));
+			uintptr_t addr = file_end_addr + next_page_adjust;
+			assert(addr % page_size == 0);
+			ssize_t sz = memsz - filesz - next_page_adjust;
 			// assert(PAGE_ADJUST(addr) == 0);
-			ret = mmap(addr, memsz - filesz,
-				prot, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+			if (sz > 0)
+			{
+				ret = mmap((void*) addr, sz, prot, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+			}
 		}
 		return (ret == MAP_FAILED);
 	}

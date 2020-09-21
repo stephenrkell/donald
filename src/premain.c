@@ -133,6 +133,7 @@ static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned ch
  * it holds the entry stack pointer *minus 8 bytes*. */
 #define BP_TO_SP_FIXUP 0x8
 
+void *rsp_on_entry HIDDEN;
 /* This isn't the usual "main"; it's the raw entry point of the application. 
  * We link with -nostartfiles. We then define our own main. */
 int _start(void)
@@ -144,9 +145,10 @@ int _start(void)
 	
 	int argc;
 	char **argv;
-	preinit(bp_after_main_prologue + BP_TO_SP_FIXUP, &argc, &argv); // get us a sane environment
+	rsp_on_entry = bp_after_main_prologue + BP_TO_SP_FIXUP;
+	preinit(rsp_on_entry, &argc, &argv); // get us a sane environment
 	
-	printf("Hello from donald!\n");
+	printf("Hello from " DONALD_NAME "!\n");
 	
 	int ret = main(argc, argv);
 	
