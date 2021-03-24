@@ -6,7 +6,13 @@
 #include <sys/mman.h>
 #include <err.h>
 #include <sys/syscall.h>   /* For SYS_xxx definitions */
+#ifdef __x86_64__
 #include <asm/prctl.h> /* for ARCH_SET_FS */
+#endif
+#ifdef __i386__
+#include <linux/unistd.h>
+#include <asm/ldt.h>
+#endif
 #include <assert.h>
 #include "donald.h"
 
@@ -16,7 +22,17 @@
 static char fake_tls[4096]; // FIXME: better way to size this
 void __init_tls(size_t *auxv)
 {
+#if defined(__x86_64__)
 	syscall(SYS_arch_prctl, ARCH_SET_FS, (unsigned long) fake_tls);
+#elif defined (__i386__)
+	/* What's the 386 equivalent? musl seems to do set_thread_area...
+	 * but not in its ld.so. FIXME: this is probably wrong. */
+	static struct user_desc u;
+	u.entry_number = -1;
+	syscall(SYS_set_thread_area, &u);
+#else
+#error "Unrecognised architecture."
+#endif
 	*(void**)fake_tls = &fake_tls[0];
 }
 
@@ -30,9 +46,7 @@ int main(int argc, char **argv)
 	
 	/* We use musl as our libc. That means there are (up to) two libc instances
 	 * in the process! Before we do any libc calls, make sure musl's state
-	 * is initialized. We use librunt to get the env/arg values.
-	 * FIXME: the librunt call is not necessary as we can thread the auxv
-	 * through from our premain... we are the ld.so, after all. */
+	 * is initialized. */
 	__init_libc((char**) environ, *argv);
 
 	struct stat proc_exe;
@@ -71,13 +85,13 @@ int main(int argc, char **argv)
 			|| p_hdr->e_ident[EI_MAG1] != 'E'
 			|| p_hdr->e_ident[EI_MAG2] != 'L'
 			|| p_hdr->e_ident[EI_MAG3] != 'F'
-			|| p_hdr->e_ident[EI_CLASS] != ELFCLASS64
+			|| p_hdr->e_ident[EI_CLASS] != DONALD_ELFCLASS
 			|| p_hdr->e_ident[EI_DATA] != ELFDATA2LSB
 			|| p_hdr->e_ident[EI_VERSION] != EV_CURRENT
 			|| (p_hdr->e_ident[EI_OSABI] != ELFOSABI_SYSV && p_hdr->e_ident[EI_OSABI] != ELFOSABI_GNU)
 			// || phdr->e_ident[EI_ABIVERSION] != /* what? */
 			|| p_hdr->e_type != ET_EXEC
-			|| p_hdr->e_machine != EM_X86_64
+			|| p_hdr->e_machine != DONALD_ELFMACHINE
 			)
 	{
 		die("unsupported file: %s\n", argv[argv_program_ind]);

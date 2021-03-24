@@ -5,7 +5,18 @@
 #include <unistd.h>
 
 // stolen from glibc's link.h
+#ifdef __x86_64__
 #define __ELF_NATIVE_CLASS 64
+#define DONALD_ELFCLASS ELFCLASS64
+#define DONALD_ELFMACHINE EM_X86_64
+#elif defined(__i386__)
+#define __ELF_NATIVE_CLASS 32
+#define DONALD_ELFCLASS ELFCLASS32
+#define DONALD_ELFMACHINE EM_386
+#else
+#error "Unrecognised architecture."
+#endif
+
 #define ElfW(type)      _ElfW (Elf, __ELF_NATIVE_CLASS, type)
 #define _ElfW(e,w,t)    _ElfW_1 (e, w, _##t)
 #define _ElfW_1(e,w,t)  e##w##t

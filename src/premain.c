@@ -60,6 +60,7 @@ static inline void __attribute__((always_inline)) preinit(unsigned char *sp_on_e
 static inline void __attribute__((always_inline)) 
 do_one_rela(ElfW(Rela) *p_rela, unsigned char *at_base, ElfW(Sym) *p_dynsym)
 {
+#if defined(__x86_64__)
 #define SYMADDR(r_info) (p_dynsym[ELF64_R_SYM((r_info))].st_value)
 	Elf64_Addr *reloc_addr = (Elf64_Addr *)(at_base + p_rela->r_offset);
 	switch (ELF64_R_TYPE(p_rela->r_info))
@@ -79,6 +80,30 @@ do_one_rela(ElfW(Rela) *p_rela, unsigned char *at_base, ElfW(Sym) *p_dynsym)
 			break;
 	}
 #undef SYMADDR
+#elif defined(__i386__)
+#define SYMADDR(r_info) (p_dynsym[ELF32_R_SYM((r_info))].st_value)
+	Elf32_Addr *reloc_addr = (Elf32_Addr *)(at_base + p_rela->r_offset);
+	switch (ELF32_R_TYPE(p_rela->r_info))
+	{
+		case R_386_RELATIVE: // no symbol addr, because we're RELATIVE
+			*reloc_addr = (Elf32_Addr)(at_base + p_rela->r_addend); 
+			break;
+		case R_386_32: 
+			*reloc_addr = (Elf32_Addr)(at_base + SYMADDR(p_rela->r_info) + p_rela->r_addend);
+			break;
+		case R_386_JUMP_SLOT:
+		case R_386_GLOB_DAT:
+			*reloc_addr = (Elf32_Addr)(at_base + SYMADDR(p_rela->r_info));
+			break;
+		default: 
+			/* We can't report an error in any useful way here. */
+			break;
+	}
+#undef SYMADDR
+
+#else
+#error "Unknown architecture."
+#endif
 }
 
 static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned char *at_base)
@@ -121,7 +146,7 @@ static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned ch
 	}
 	p_rela = rela_plt_start;
 	/* HACK: we assume PLT contains rela, not rel, for now. */
-	for (int i = 0; i < (rela_plt_sz / sizeof (Elf64_Rela)); ++i)
+	for (int i = 0; i < (rela_plt_sz / sizeof (ElfW(Rela))); ++i)
 	{
 		do_one_rela(rela_plt_start + i, at_base, dynsym_start);
 	}
@@ -131,7 +156,7 @@ static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned ch
 /* The function prologue pushes rbp on entry, decrementing the stack
  * pointer by 8. Then it saves rsp into rbp. So by the time we see rbp, 
  * it holds the entry stack pointer *minus 8 bytes*. */
-#define BP_TO_SP_FIXUP 0x8
+#define BP_TO_SP_FIXUP sizeof(char*)
 
 /* This isn't the usual "main"; it's the raw entry point of the application. 
  * We link with -nostartfiles. We then define our own main. */
@@ -140,7 +165,13 @@ int _start(void)
 	/* gcc doesn't let us disable prologue/epilogue, so we have to fudge it.
 	 * We assume rsp is saved into rbp in the prologue. */
 	register unsigned char *bp_after_main_prologue;
+#if defined(__x86_64__)
 	__asm__ ("movq %%rbp, %0\n" : "=r"(bp_after_main_prologue));
+#elif defined(__i386__)
+	__asm__ ("mov %%ebp, %0\n" : "=r"(bp_after_main_prologue));
+#else
+#error "Unrecognised architecture."
+#endif
 	
 	int argc;
 	char **argv;
