@@ -91,7 +91,7 @@ do_one_rela(ElfW(Rela) *p_rela, unsigned char *at_base, ElfW(Sym) *p_dynsym)
 		case R_386_32: 
 			*reloc_addr = (Elf32_Addr)(at_base + SYMADDR(p_rela->r_info) + p_rela->r_addend);
 			break;
-		case R_386_JUMP_SLOT:
+		case R_386_JMP_SLOT:
 		case R_386_GLOB_DAT:
 			*reloc_addr = (Elf32_Addr)(at_base + SYMADDR(p_rela->r_info));
 			break;
