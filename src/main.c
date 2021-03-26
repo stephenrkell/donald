@@ -16,8 +16,12 @@
 #include <assert.h>
 #include "donald.h"
 
-#define die(s, ...) do { fprintf(stderr, "donald: " s , ##__VA_ARGS__); return -1; } while(0)
-// #define die(s, ...) do { fwrite("donald: " s , sizeof "donald: " s, 1, stderr); return -1; } while(0)
+#ifdef CHAIN_LOADER_COVER_TRACKS_DECLS
+CHAIN_LOADER_COVER_TRACKS_DECLS
+#endif
+
+#define die(s, ...) do { fprintf(stderr, DONALD_NAME ": " s , ##__VA_ARGS__); return -1; } while(0)
+// #define die(s, ...) do { fwrite(DONALD_NAME ": " s , sizeof DONALD_NAME ": " s, 1, stderr); return -1; } while(0)
 
 extern int _start(void);
 
@@ -91,7 +95,7 @@ int main(int argc, char **argv)
 	/* We have a program to run. Let's read it. */
 	inferior_path = argv[argv_program_ind];
 #endif
-	inferior_fd = open(argv[argv_program_ind], O_RDONLY);
+	inferior_fd = open(inferior_path, O_RDONLY);
 	if (inferior_fd == -1) { die("could not open %s\n", inferior_path); }
 	int ret = fstat(inferior_fd, &inferior_stat);
 	if (ret != 0) { die("could not open %s\n", inferior_path); }
@@ -101,21 +105,31 @@ int main(int argc, char **argv)
 	ElfW(Ehdr) ehdr; nread = read(inferior_fd, &ehdr, sizeof (ElfW(Ehdr)));
 	if (nread != sizeof (ElfW(Ehdr))) die("could not read ELF header of %s\n", inferior_path);
 
+	_Bool is_elf = 0, class_matches = 0, is_lsb = 0, is_current = 0, is_sysv_or_gnu = 0,
+		is_exec_or_solib = 0;
 	// check it's a file we can grok
 	if (ehdr.e_ident[EI_MAG0] != 0x7f
 			|| ehdr.e_ident[EI_MAG1] != 'E'
 			|| ehdr.e_ident[EI_MAG2] != 'L'
 			|| ehdr.e_ident[EI_MAG3] != 'F'
-			|| ehdr.e_ident[EI_CLASS] != DONALD_ELFCLASS
-			|| ehdr.e_ident[EI_DATA] != ELFDATA2LSB
-			|| ehdr.e_ident[EI_VERSION] != EV_CURRENT
-			|| (ehdr.e_ident[EI_OSABI] != ELFOSABI_SYSV && ehdr.e_ident[EI_OSABI] != ELFOSABI_GNU)
+			|| (is_elf = 1, ehdr.e_ident[EI_CLASS] != DONALD_ELFCLASS)
+			|| (class_matches = 1, ehdr.e_ident[EI_DATA] != ELFDATA2LSB)
+			|| (is_lsb = 1, ehdr.e_ident[EI_VERSION] != EV_CURRENT)
+			|| (is_current = 1, ehdr.e_ident[EI_OSABI] != ELFOSABI_SYSV && ehdr.e_ident[EI_OSABI] != ELFOSABI_GNU)
 			// || ehdr. e_ident[EI_ABIVERSION] != /* what? */
-			|| ehdr.e_type != ET_EXEC
-			|| ehdr.e_machine != DONALD_ELFMACHINE
+			|| (is_sysv_or_gnu = 1, ehdr.e_type != ET_EXEC && ehdr.e_type != ET_DYN)
+			|| (is_exec_or_solib = 1, ehdr.e_machine != DONALD_ELFMACHINE)
 			)
 	{
-		die("unsupported file: %s\n", argv[argv_program_ind]);
+		die("unsupported file (%s): %s\n",
+			!is_elf ? "not an ELF file"
+			: !class_matches ? "not of expected ELF class"
+			: !is_lsb ? "not ELFDATA2LSB"
+			: !is_current ? "not EV_CURRENT"
+			: !is_sysv_or_gnu ? "not System V or GNU ABI"
+			: !is_exec_or_solib ? "not an executable"
+			: "unexpected machine",
+			argv[argv_program_ind]);
 	}
 	
 	// process the PT_LOADs
@@ -189,8 +203,48 @@ int main(int argc, char **argv)
 	// now we're finished with the file
 	close(inferior_fd);
 
-#if defined(CHAIN_LOADER) && defined(CHAIN_LOADER_COVER_TRACKS) /* FIXME: reinstate */
+#ifdef CHAIN_LOADER
+	// fix up the auxv so that the ld.so thinks it's just been run
+	ElfW(Phdr) *program_phdrs = NULL;
+	unsigned program_phentsize = 0;
+	unsigned program_phnum = 0;
+	for (ElfW(auxv_t) *p = p_auxv; p->a_type; ++p)
+	{
+		switch (p->a_type)
+		{
+			case AT_ENTRY:
+				if (we_are_the_program) p->a_un.a_val = entry_point;
+				fprintf(stderr, "AT_ENTRY is %p\n", (void*) p->a_un.a_val);
+				break;
+			case AT_PHDR:
+				if (we_are_the_program) p->a_un.a_val = phdrs_addr;
+				else program_phdrs = (void*) p->a_un.a_val;
+				fprintf(stderr, "AT_PHDR is %p\n", (void*) p->a_un.a_val);
+				break;
+			case AT_PHENT:
+				if (we_are_the_program) p->a_un.a_val = ehdr.e_phentsize;
+				else program_phentsize = p->a_un.a_val;
+				fprintf(stderr, "AT_PHENT is %p\n", (void*) p->a_un.a_val);
+				break;
+			case AT_PHNUM:
+				if (we_are_the_program) p->a_un.a_val = ehdr.e_phnum;
+				else program_phnum = p->a_un.a_val;
+				fprintf(stderr, "AT_PHNUM is %p\n", (void*) p->a_un.a_val);
+				break;
+			case AT_BASE:
+				if (we_are_the_program) p->a_un.a_val = 0;
+				else p->a_un.a_val = base_addr;
+				fprintf(stderr, "AT_BASE is %p\n", (void*) p->a_un.a_val);
+				break;
+			case AT_EXECFN:
+				if (we_are_the_program) p->a_un.a_val = (uintptr_t) argv[0];
+				fprintf(stderr, "AT_EXECFN is %p (%s)\n", (void*) p->a_un.a_val, (char*) p->a_un.a_val);
+				break;
+		}
+	}
+#ifdef CHAIN_LOADER_COVER_TRACKS
 	CHAIN_LOADER_COVER_TRACKS
+#endif
 #endif
 
 	// jump to the entry point
