@@ -1,5 +1,6 @@
 #include "donald.h"
 #include <sys/mman.h>
+#include <string.h> /* for memset */
 #include <assert.h>
 
 int load_one_phdr(unsigned long base_addr, int fd, unsigned long vaddr, unsigned long offset,
@@ -28,11 +29,22 @@ int load_one_phdr(unsigned long base_addr, int fd, unsigned long vaddr, unsigned
 		// up to two mappings: one as usual for the filesz...
 		char *addr = (char*) base_addr + vaddr;
 		size_t mapping_size = ROUND_UP_TO(page_size, filesz + PAGE_ADJUST(addr));
+		// clear the range from filesz upwards if necessary -- it might be bss
+		ssize_t uninited_size = mapping_size - PAGE_ADJUST(addr) - filesz;
+		int temporary_prot = (uninited_size <= 0) ? prot : ((prot | PROT_WRITE) & ~PROT_EXEC);
 		ret = mmap(addr - PAGE_ADJUST(addr),
 			mapping_size,
-			prot, MAP_FIXED | MAP_PRIVATE, fd, offset - PAGE_ADJUST(addr));
+			temporary_prot, MAP_FIXED | MAP_PRIVATE, fd, offset - PAGE_ADJUST(addr));
 		if (ret != MAP_FAILED)
 		{
+			if (uninited_size > 0)
+			{
+				memset((char*) ret + PAGE_ADJUST(addr) + filesz, 0, uninited_size);
+			}
+			if (temporary_prot != prot)
+			{
+				mprotect(ret, mapping_size, prot);
+			}
 			// one anonymous for the remainder of the memsz
 			uintptr_t file_end_addr = (uintptr_t) base_addr + vaddr + filesz;
 			// we have to adjust the start addr to the *next* page
