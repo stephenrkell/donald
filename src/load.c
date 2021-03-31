@@ -1,3 +1,4 @@
+#define _GNU_SOURCE /* for MAP_ANONYMOUS */
 #include "donald.h"
 #include <sys/mman.h>
 #include <string.h> /* for memset */
