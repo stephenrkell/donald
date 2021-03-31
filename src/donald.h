@@ -42,4 +42,5 @@ int main(int argc, char **argv) HIDDEN;
 int load_one_phdr(unsigned long base_addr, int fd, unsigned long vaddr, unsigned long offset,
 	unsigned long memsz, unsigned long filesz, _Bool read, _Bool write, _Bool exec) HIDDEN;
 void enter(void *entry_point) __attribute__((noreturn)) HIDDEN;
+
 #endif

@@ -1,7 +1,17 @@
+#define _GNU_SOURCE /* for syscall() */
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/syscall.h>   /* For SYS_xxx definitions */
-#include <linux/auxvec.h>  /* For AT_xxx definitions */
+#include <asm/unistd.h>
+#ifdef __x86_64__
+#include <asm/prctl.h> /* for ARCH_SET_FS */
+#endif
+#ifdef __i386__
+#include <linux/unistd.h>
+#include <asm/ldt.h>
+#endif
 #include "donald.h"
 
 extern int _DYNAMIC;        // defined for us by the linker
@@ -88,19 +98,50 @@ do_one_rela(ElfW(Rela) *p_rela, unsigned char *at_base, ElfW(Sym) *p_dynsym)
 		case R_386_RELATIVE: // no symbol addr, because we're RELATIVE
 			*reloc_addr = (Elf32_Addr)(at_base + p_rela->r_addend); 
 			break;
-		case R_386_32: 
+		case R_386_32:
 			*reloc_addr = (Elf32_Addr)(at_base + SYMADDR(p_rela->r_info) + p_rela->r_addend);
 			break;
 		case R_386_JMP_SLOT:
 		case R_386_GLOB_DAT:
 			*reloc_addr = (Elf32_Addr)(at_base + SYMADDR(p_rela->r_info));
 			break;
-		default: 
+		default:
 			/* We can't report an error in any useful way here. */
 			break;
 	}
 #undef SYMADDR
 
+#else
+#error "Unknown architecture."
+#endif
+}
+
+static inline void __attribute__((always_inline))
+do_one_rel(ElfW(Rel) *p_rel, unsigned char *at_base, ElfW(Sym) *p_dynsym)
+{
+#if defined(__x86_64__)
+/* Nothing: x86_64 does not use rel */
+#elif defined(__i386__)
+#define SYMADDR(r_info) (p_dynsym[ELF32_R_SYM((r_info))].st_value)
+	Elf32_Addr *reloc_addr = (Elf32_Addr *)(at_base + p_rel->r_offset);
+	Elf32_Addr current; memcpy(&current, reloc_addr, sizeof (Elf32_Addr));
+	switch (ELF32_R_TYPE(p_rel->r_info))
+	{
+		case R_386_RELATIVE: // no symbol addr, because we're RELATIVE
+			*reloc_addr = (Elf32_Addr) at_base + current;
+			break;
+		case R_386_32:
+			*reloc_addr = (Elf32_Addr)(at_base + SYMADDR(p_rel->r_info) + current);
+			break;
+		case R_386_JMP_SLOT:
+		case R_386_GLOB_DAT:
+			*reloc_addr = (Elf32_Addr)(at_base + SYMADDR(p_rel->r_info) + current);
+			break;
+		default:
+			/* We can't report an error in any useful way here. */
+			break;
+	}
+#undef SYMADDR
 #else
 #error "Unknown architecture."
 #endif
@@ -113,12 +154,21 @@ static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned ch
 	ElfW(Dyn) *p_dyn = (void*)(at_base + (uintptr_t) &_DYNAMIC);
 	ElfW(Sym) *dynsym_start = NULL;
 	unsigned long dynsym_nsyms = 0;
+
+	void *rela_plt_start = NULL;
+	unsigned long rela_plt_sz = 0;
+
 	ElfW(Rela) *rela_dyn_start = NULL;
-	ElfW(Rela) *rela_plt_start = NULL;
 	unsigned long rela_dyn_sz = 0;
 	unsigned long rela_dyn_entsz = 0;
 	unsigned long rela_dyn_nents = 0;
-	unsigned long rela_plt_sz = 0;
+
+	ElfW(Rel) *rel_dyn_start = NULL;
+	unsigned long rel_dyn_sz = 0;
+	unsigned long rel_dyn_entsz = 0;
+	unsigned long rel_dyn_nents = 0;
+
+	unsigned long pltrel = 0;
 	while (p_dyn->d_tag != DT_NULL)
 	{
 		if (p_dyn->d_tag == DT_SYMTAB) dynsym_start = (void*)(at_base + p_dyn->d_un.d_ptr);
@@ -126,11 +176,19 @@ static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned ch
 		else if (p_dyn->d_tag == DT_RELA) rela_dyn_start = (void *)(at_base + p_dyn->d_un.d_ptr);
 		else if (p_dyn->d_tag == DT_RELASZ) rela_dyn_sz = p_dyn->d_un.d_val;
 		else if (p_dyn->d_tag == DT_RELAENT) rela_dyn_entsz = p_dyn->d_un.d_val;
+		else if (p_dyn->d_tag == DT_REL) rel_dyn_start = (void *)(at_base + p_dyn->d_un.d_ptr);
+		else if (p_dyn->d_tag == DT_RELSZ) rel_dyn_sz = p_dyn->d_un.d_val;
+		else if (p_dyn->d_tag == DT_RELENT) rel_dyn_entsz = p_dyn->d_un.d_val;
 		else if (p_dyn->d_tag == DT_JMPREL) rela_plt_start = (void *)(at_base + p_dyn->d_un.d_ptr);
 		else if (p_dyn->d_tag == DT_PLTRELSZ) rela_plt_sz = p_dyn->d_un.d_val;
+		else if (p_dyn->d_tag == DT_PLTREL) pltrel = p_dyn->d_un.d_val;
 		++p_dyn;
 	}
 	if (rela_dyn_entsz > 0) rela_dyn_nents = rela_dyn_sz / rela_dyn_entsz;
+	if (rel_dyn_entsz > 0) rel_dyn_nents = rel_dyn_sz / rel_dyn_entsz;
+	if (rela_dyn_entsz > 0 && rel_dyn_entsz > 0) abort();
+	unsigned long dynrel;
+	if (rela_dyn_entsz > 0) dynrel = DT_RELA; else dynrel = DT_REL;
 	
 	/* We loop over the relocs table and relocate what needs relocating. 
 	 * uClibc claims that we should *only* relocate things that are not 
@@ -139,19 +197,44 @@ static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned ch
 	 * internally, should we? What would it mean to interpose on a symbol defined
 	 * by the dynamic linker? What would it mean to interpose on a reference made
 	 * from the dynamic linker? HMM. */
-	ElfW(Rela) *p_rela = rela_dyn_start;
-	for (int i = 0; i < rela_dyn_nents; ++i)
+	//ElfW(Rela) *p_rela = rela_dyn_start;
+	for (int i = 0; i < ((dynrel == DT_REL) ? rel_dyn_nents : rela_dyn_nents); ++i)
 	{
-		do_one_rela(rela_dyn_start + i, at_base, dynsym_start);
-	}
-	p_rela = rela_plt_start;
-	/* HACK: we assume PLT contains rela, not rel, for now. */
-	for (int i = 0; i < (rela_plt_sz / sizeof (ElfW(Rela))); ++i)
-	{
-		do_one_rela(rela_plt_start + i, at_base, dynsym_start);
+		if (dynrel == DT_REL)
+		     do_one_rel (rel_dyn_start  + i, at_base, dynsym_start);
+		else do_one_rela(rela_dyn_start + i, at_base, dynsym_start);
 	}
 	/* Also do .rela.plt */
+	/* NOTE: it's called rela_plt_start, but it could be rel or rela */
+	for (int i = 0;
+			i < ((pltrel == DT_REL) ? (rela_plt_sz / sizeof (ElfW(Rel)))
+			                        : (rela_plt_sz / sizeof (ElfW(Rela))));
+			++i)
+	{
+		if (pltrel == DT_REL)
+		    do_one_rel(((ElfW(Rel) *) rela_plt_start) + i, at_base, dynsym_start);
+		else do_one_rela(((ElfW(Rela) *) rela_plt_start) + i, at_base, dynsym_start);
+	}
 }
+
+// with musl we don't need a fake_tls -- it has a static builtin_tls which we link in
+/* __init_tp is called by __init_libc: __init_tp(__copy_tls((void*) builtin_tls))
+ * and returns zero on success. We wrap it. */
+int __wrap___init_tp(void *tp)
+{
+#if defined(__x86_64__)
+	// syscall(SYS_arch_prctl, ARCH_SET_FS, (unsigned long) fake_tls);
+	__set_thread_area(tp); // musl-internal, does the same thing
+#elif defined (__i386__)
+	__set_thread_area(tp); // musl-internal, does the same thing
+#else
+#error "Unrecognised architecture."
+#endif
+	return 0;
+}
+
+void __init_libc(char **envp, char *pn); // musl-internal API
+int __init_tp(void *p);
 
 /* The function prologue pushes rbp on entry, decrementing the stack
  * pointer by 8. Then it saves rsp into rbp. So by the time we see rbp, 
@@ -178,7 +261,11 @@ int _start(void)
 	char **argv;
 	sp_on_entry = bp_after_main_prologue + BP_TO_SP_FIXUP;
 	preinit(sp_on_entry, &argc, &argv); // get us a sane environment
-	
+	// calls __init_tp... FIXME: do we really want to init musl?
+	// Perhaps we should simply fake up TLS ourselves, using __set_thread_area
+	// directly, and work entirely "underneath". Avoids fragility of depending
+	// on musl internals, like its builtin_tls, and __init_libc call sequence.
+	__init_libc(environ, argv[0]);
 	printf("Hello from " DONALD_NAME "!\n");
 	
 	int ret = main(argc, argv);

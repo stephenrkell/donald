@@ -1,19 +1,14 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdint.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <err.h>
-#include <sys/syscall.h>   /* For SYS_xxx definitions */
-#ifdef __x86_64__
-#include <asm/prctl.h> /* for ARCH_SET_FS */
-#endif
-#ifdef __i386__
-#include <linux/unistd.h>
-#include <asm/ldt.h>
-#endif
 #include <assert.h>
+#include <linux/auxvec.h>  /* For AT_xxx definitions */
 #include "donald.h"
 
 #ifdef CHAIN_LOADER_COVER_TRACKS_DECLS
@@ -28,26 +23,6 @@ extern int _start(void);
 #ifndef MIN
 #define MIN(a, b) ((a)<(b)?(a):(b))
 #endif
-
-static char fake_tls[4096]; // FIXME: better way to size this
-void __init_tls(size_t *auxv)
-{
-#if defined(__x86_64__)
-	syscall(SYS_arch_prctl, ARCH_SET_FS, (unsigned long) fake_tls);
-#elif defined (__i386__)
-	/* What's the 386 equivalent? musl seems to do set_thread_area...
-	 * but not in its ld.so. FIXME: this is probably wrong. */
-	static struct user_desc u;
-	u.entry_number = -1;
-	syscall(SYS_set_thread_area, &u);
-#else
-#error "Unrecognised architecture."
-#endif
-	*(void**)fake_tls = &fake_tls[0];
-}
-
-void __init_libc(char **envp, char *pn); // musl-internal API
-int __init_tp(void *p);
 
 int main(int argc, char **argv)
 {
