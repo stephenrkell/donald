@@ -12,9 +12,11 @@
 #include <linux/unistd.h>
 #include <asm/ldt.h>
 #endif
+#include <assert.h>
 #include "donald.h"
+#define RELF_DEFINE_STRUCTURES
+#include "relf.h"
 
-extern int _DYNAMIC;        // defined for us by the linker
 extern int _begin HIDDEN;   // defined by our hacked linker script (in Makefile)
 
 /* FIXME: instead of copying these guys out of auxv, can we *define symbols* 
@@ -81,9 +83,10 @@ do_one_rela(ElfW(Rela) *p_rela, unsigned char *at_base, ElfW(Sym) *p_dynsym)
 		case R_X86_64_64: 
 			*reloc_addr = (Elf64_Addr)(at_base + SYMADDR(p_rela->r_info) + p_rela->r_addend);
 			break;
+		/* Beware weak symbols having GOT entries. They should remain zero. */
 		case R_X86_64_JUMP_SLOT:
 		case R_X86_64_GLOB_DAT:
-			*reloc_addr = (Elf64_Addr)(at_base + SYMADDR(p_rela->r_info));
+			*reloc_addr = (Elf64_Addr)(at_base + (SYMADDR(p_rela->r_info) ?: -(uintptr_t)at_base));
 			break;
 		default: 
 			/* We can't report an error in any useful way here. */
@@ -101,9 +104,10 @@ do_one_rela(ElfW(Rela) *p_rela, unsigned char *at_base, ElfW(Sym) *p_dynsym)
 		case R_386_32:
 			*reloc_addr = (Elf32_Addr)(at_base + SYMADDR(p_rela->r_info) + p_rela->r_addend);
 			break;
+		/* Beware weak symbols having GOT entries. They should remain zero. */
 		case R_386_JMP_SLOT:
 		case R_386_GLOB_DAT:
-			*reloc_addr = (Elf32_Addr)(at_base + SYMADDR(p_rela->r_info));
+			*reloc_addr = (Elf32_Addr)(at_base + (SYMADDR(p_rela->r_info) ?: -(uintptr_t)at_base));
 			break;
 		default:
 			/* We can't report an error in any useful way here. */
@@ -133,9 +137,10 @@ do_one_rel(ElfW(Rel) *p_rel, unsigned char *at_base, ElfW(Sym) *p_dynsym)
 		case R_386_32:
 			*reloc_addr = (Elf32_Addr)(at_base + SYMADDR(p_rel->r_info) + current);
 			break;
+		/* Beware weak symbols having GOT entries. They should remain zero. */
 		case R_386_JMP_SLOT:
 		case R_386_GLOB_DAT:
-			*reloc_addr = (Elf32_Addr)(at_base + SYMADDR(p_rel->r_info) + current);
+			*reloc_addr = (Elf32_Addr)((intptr_t)at_base + current + (SYMADDR(p_rel->r_info) ?: -(current + (uintptr_t) at_base)));
 			break;
 		default:
 			/* We can't report an error in any useful way here. */
@@ -220,6 +225,7 @@ static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned ch
 // with musl we don't need a fake_tls -- it has a static builtin_tls which we link in
 /* __init_tp is called by __init_libc: __init_tp(__copy_tls((void*) builtin_tls))
  * and returns zero on success. We wrap it. */
+int set_thread_area(struct user_desc *u_info);
 int __wrap___init_tp(void *tp)
 {
 #if defined(__x86_64__)
@@ -233,8 +239,44 @@ int __wrap___init_tp(void *tp)
 	return 0;
 }
 
+//void static_init_tls(size_t *auxv); // in musl
+//void __init_tls(size_t *auxv) { return static_init_tls(auxv); } /* HACK borrowed from musl's own dynlink.c */
+// Actually we want to run the stock musl __init_tls because we have no __dls2b() to call it,
+// and it does the __init_tp call with the builtin_tls argument we wanted.
 void __init_libc(char **envp, char *pn); // musl-internal API
 int __init_tp(void *p);
+
+// for TLS debugging
+uintptr_t __get_from_tls_reg_offset(unsigned off) __attribute__((visibility("hidden")));
+uintptr_t __get_from_tls_reg_offset(unsigned off)
+{
+	uintptr_t word_read;
+#if defined(__x86_64__)
+	__asm__ volatile ("movq %%fs:(%1), %0" : "=r"(word_read) : "r"(off) : /* clobbers */);
+#elif defined(__i386__)
+	__asm__ volatile ("mov  %%gs:(%1), %0" : "=r"(word_read) : "r"(off) : /* clobbers */);
+#else
+#error "Unsupported architecture"
+#endif
+	return word_read;
+}
+
+static void tls_sanity_check(void)
+{
+	// assert here that our TLS state is sane, i.e. that the
+	// first word on the end of our %gs points to itself,
+	uintptr_t tp_as_read = __get_from_tls_reg_offset(0);
+	uintptr_t tp_as_read_from_itself = *(uintptr_t*) tp_as_read;
+	assert(tp_as_read == tp_as_read_from_itself);
+	// and that + 16 bytes is the vdso's sysinfo (kernel_vsyscall) entry point
+	// FIXME: this is i386 sysdep, though harmless on x86_64
+	ElfW(auxv_t) *sysinfo_ent = auxv_lookup(p_auxv, AT_SYSINFO);
+	if (sysinfo_ent)
+	{
+		uintptr_t sysinfo_as_read = __get_from_tls_reg_offset(16);
+		assert(sysinfo_as_read == sysinfo_ent->a_un.a_val);
+	}
+}
 
 /* The function prologue pushes rbp on entry, decrementing the stack
  * pointer by 8. Then it saves rsp into rbp. So by the time we see rbp, 
@@ -266,6 +308,8 @@ int _start(void)
 	// directly, and work entirely "underneath". Avoids fragility of depending
 	// on musl internals, like its builtin_tls, and __init_libc call sequence.
 	__init_libc(environ, argv[0]);
+	tls_sanity_check();
+
 	printf("Hello from " DONALD_NAME "!\n");
 	
 	int ret = main(argc, argv);

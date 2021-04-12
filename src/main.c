@@ -119,14 +119,28 @@ int main(int argc, char **argv)
 		nread = read(inferior_fd, &phdrs[i], ntoread);
 		if (nread != ntoread) die("could not read program header %d in %s\n", i, inferior_path);
 	}
+	// also snarf the shdrs
+	newloc = lseek(inferior_fd, ehdr.e_shoff, SEEK_SET);
+	ElfW(Shdr) shdrs[ehdr.e_shnum];
+	for (unsigned i = 0; i < ehdr.e_shnum; ++i)
+	{
+		off_t off = ehdr.e_shoff + i * ehdr.e_shentsize;
+		newloc = lseek(inferior_fd, off, SEEK_SET);
+		if (newloc != off) die("could not seek to section header %d in %s\n", i, inferior_path);
+		size_t ntoread = MIN(sizeof shdrs[0], ehdr.e_shentsize);
+		nread = read(inferior_fd, &shdrs[i], ntoread);
+		if (nread != ntoread) die("could not read section header %d in %s\n", i, inferior_path);
+	}
 	/* Now we've snarfed the phdrs. But remember that we want to map them
 	 * without holes. To do this, calculate the maximum vaddr we need,
 	 * then map a whole chunk of memory PROT_NONE in that space. We will
 	 * use the ldso fd, so that it appears as a mapping of that file
 	 * (this helps liballocs). */
 	ElfW(Addr) max_vaddr = 0;
+	uintptr_t inferior_dynamic_vaddr __attribute__((used)) = (uintptr_t) -1;
 	for (unsigned i = 0; i < ehdr.e_phnum; ++i)
 	{
+		if (phdrs[i].p_type == PT_DYNAMIC) inferior_dynamic_vaddr = phdrs[i].p_vaddr;
 		ElfW(Addr) max_vaddr_this_obj = phdrs[i].p_vaddr + phdrs[i].p_memsz;
 		if (max_vaddr_this_obj > max_vaddr) max_vaddr = max_vaddr_this_obj;
 	}
@@ -175,9 +189,6 @@ int main(int argc, char **argv)
 	// grab the entry point
 	register unsigned long entry_point = base_addr + ehdr.e_entry;
 
-	// now we're finished with the file
-	close(inferior_fd);
-
 #ifdef CHAIN_LOADER
 	// fix up the auxv so that the ld.so thinks it's just been run
 	ElfW(Phdr) *program_phdrs = NULL;
@@ -221,6 +232,9 @@ int main(int argc, char **argv)
 	CHAIN_LOADER_COVER_TRACKS
 #endif
 #endif
+
+	// now we're finished with the file
+	close(inferior_fd);
 
 	// jump to the entry point
 	enter((void*) entry_point);
