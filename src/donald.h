@@ -7,7 +7,9 @@
 
 // stolen from glibc's link.h
 #ifdef __x86_64__
+#ifndef __ELF_NATIVE_CLASS
 #define __ELF_NATIVE_CLASS 64
+#endif
 #define DONALD_ELFCLASS ELFCLASS64
 #define DONALD_ELFMACHINE EM_X86_64
 #elif defined(__i386__)
