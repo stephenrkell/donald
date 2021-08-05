@@ -225,7 +225,7 @@ static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned ch
 // with musl we don't need a fake_tls -- it has a static builtin_tls which we link in
 /* __init_tp is called by __init_libc: __init_tp(__copy_tls((void*) builtin_tls))
  * and returns zero on success. We wrap it. */
-int set_thread_area(struct user_desc *u_info);
+int __set_thread_area(struct user_desc *u_info);
 int __wrap___init_tp(void *tp)
 {
 #if defined(__x86_64__)
