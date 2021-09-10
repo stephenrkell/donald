@@ -156,7 +156,8 @@ static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned ch
 {
 	/* We scan _DYNAMIC to get our own symbol table. HACK: we manually relocate &_DYNAMIC
 	 * by our load address to get its actual address. */
-	ElfW(Dyn) *p_dyn = (void*)(at_base + (uintptr_t) &_DYNAMIC);
+	ElfW(Dyn) *p_dyn = ((uintptr_t) &_DYNAMIC < at_base) ? (void*)(at_base + (uintptr_t) &_DYNAMIC)
+	    : &_DYNAMIC;
 	ElfW(Sym) *dynsym_start = NULL;
 	unsigned long dynsym_nsyms = 0;
 
