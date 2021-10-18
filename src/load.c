@@ -46,17 +46,14 @@ int load_one_phdr(unsigned long base_addr, int fd, unsigned long vaddr, unsigned
 			{
 				mprotect(ret, mapping_size, prot);
 			}
-			// one anonymous for the remainder of the memsz
-			uintptr_t file_end_addr = (uintptr_t) base_addr + vaddr + filesz;
-			// we have to adjust the start addr to the *next* page
-			off_t next_page_adjust = page_size - (PAGE_ADJUST(file_end_addr));
-			uintptr_t addr = file_end_addr + next_page_adjust;
-			assert(addr % page_size == 0);
-			ssize_t sz = memsz - filesz - next_page_adjust;
-			// assert(PAGE_ADJUST(addr) == 0);
-			if (sz > 0)
+			uintptr_t mapped_up_to_vaddr = vaddr - PAGE_ADJUST(vaddr) + mapping_size;
+			if (mapped_up_to_vaddr < vaddr + memsz)
 			{
-				ret = mmap((void*) addr, sz, prot, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+				uintptr_t mapped_end_vaddr = ROUND_UP_TO(page_size, vaddr + memsz);
+				assert(mapped_end_vaddr > mapped_up_to_vaddr);
+				ret = mmap((char*) base_addr + mapped_up_to_vaddr,
+					mapped_end_vaddr - mapped_up_to_vaddr,
+					prot, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 			}
 		}
 		return (ret == MAP_FAILED);
