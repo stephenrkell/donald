@@ -156,7 +156,7 @@ static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned ch
 {
 	/* We scan _DYNAMIC to get our own symbol table. HACK: we manually relocate &_DYNAMIC
 	 * by our load address to get its actual address. */
-	ElfW(Dyn) *p_dyn = ((uintptr_t) &_DYNAMIC < at_base) ? (void*)(at_base + (uintptr_t) &_DYNAMIC)
+	ElfW(Dyn) *p_dyn = ((uintptr_t) &_DYNAMIC < (uintptr_t) at_base) ? (void*)((uintptr_t) at_base + (uintptr_t) &_DYNAMIC)
 	    : &_DYNAMIC;
 	ElfW(Sym) *dynsym_start = NULL;
 	unsigned long dynsym_nsyms = 0;
@@ -226,6 +226,7 @@ static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned ch
 // with musl we don't need a fake_tls -- it has a static builtin_tls which we link in
 /* __init_tp is called by __init_libc: __init_tp(__copy_tls((void*) builtin_tls))
  * and returns zero on success. We wrap it. */
+struct user_desc;
 int __set_thread_area(struct user_desc *u_info);
 int __wrap___init_tp(void *tp)
 {
