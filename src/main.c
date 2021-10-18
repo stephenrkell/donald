@@ -58,14 +58,7 @@ int main(int argc, char **argv)
 	const char *inferior_path;
 #ifdef CHAIN_LOADER
 	/* We always chain-load the ld.so and let it load the program. Let's read it. */
-#if defined(__x86_64__)
-	const char ldso_path[] = "/lib64/ld-linux-x86-64.so.2";
-#elif defined(__i386__)
-	const char ldso_path[] = "/lib/ld-linux.so.2";
-#else
-#error "Unrecognised architecture."
-#endif
-	inferior_path = ldso_path;
+	inferior_path = SYSTEM_LDSO_PATH;
 #else
 	/* We have a program to run. Let's read it. */
 	inferior_path = argv[argv_program_ind];

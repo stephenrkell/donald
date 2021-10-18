@@ -37,6 +37,16 @@
 #define DONALD_NAME "donald"
 #endif
 
+#ifndef SYSTEM_LDSO_PATH
+#if defined(__x86_64__)
+#define SYSTEM_LDSO_PATH "/lib64/ld-linux-x86-64.so.2"
+#elif defined(__i386__)
+#define SYSTEM_LDSO_PATH "/lib/ld-linux.so.2"
+#else
+#error "Unrecognised architecture."
+#endif
+#endif
+
 extern int _begin; // defined by linker script; if used, we need it, so non-weak
 extern char **environ HIDDEN;
 extern ElfW(Dyn) *p_dyn HIDDEN;
