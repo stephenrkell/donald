@@ -8,6 +8,7 @@
 #include <sys/mman.h>
 #include <err.h>
 #include <assert.h>
+#include <string.h> /* for strcmp() */
 #include <linux/auxvec.h>  /* For AT_xxx definitions */
 #include "donald.h"
 
@@ -130,7 +131,7 @@ int main(int argc, char **argv)
 	 * use the ldso fd, so that it appears as a mapping of that file
 	 * (this helps liballocs). */
 	ElfW(Addr) max_vaddr = 0;
-	uintptr_t inferior_dynamic_vaddr __attribute__((used)) = (uintptr_t) -1;
+	uintptr_t inferior_dynamic_vaddr = (uintptr_t) -1;
 	for (unsigned i = 0; i < ehdr.e_phnum; ++i)
 	{
 		if (phdrs[i].p_type == PT_DYNAMIC) inferior_dynamic_vaddr = phdrs[i].p_vaddr;
@@ -148,7 +149,9 @@ int main(int argc, char **argv)
 		inferior_fd, 0);
 	if (base == MAP_FAILED) die("could not map %s with PROT_NONE\n", inferior_path);
 	uintptr_t base_addr = (uintptr_t) base;
-	uintptr_t phdrs_addr = 0;
+	uintptr_t inferior_phdrs_addr = 0;
+	ElfW(Dyn)* inferior_dynamic = NULL;
+	size_t inferior_dynamic_size = 0;
 	for (unsigned i = 0; i < ehdr.e_phnum; ++i)
 	{
 		if (phdrs[i].p_type == PT_LOAD)
@@ -160,7 +163,7 @@ int main(int argc, char **argv)
 			if (phdrs[i].p_offset < ehdr.e_phoff
 					&& phdrs[i].p_filesz >= ehdr.e_phoff + (ehdr.e_phnum + ehdr.e_phentsize))
 			{
-				phdrs_addr = base_addr + phdrs[i].p_vaddr + (ehdr.e_phoff - phdrs[i].p_offset);
+				inferior_phdrs_addr = base_addr + phdrs[i].p_vaddr + (ehdr.e_phoff - phdrs[i].p_offset);
 			}
 			ret = load_one_phdr(base_addr, inferior_fd, phdrs[i].p_vaddr,
 				phdrs[i].p_offset, phdrs[i].p_memsz, phdrs[i].p_filesz, read, write, exec);
@@ -175,6 +178,11 @@ int main(int argc, char **argv)
 					break;
 			}
 		}
+		else if (phdrs[i].p_type == PT_DYNAMIC)
+		{
+			inferior_dynamic = (ElfW(Dyn)*)(base_addr + phdrs[i].p_vaddr);
+			inferior_dynamic_size = phdrs[i].p_memsz;
+		}
 	}
 
 	// do relocations!
@@ -183,10 +191,22 @@ int main(int argc, char **argv)
 	register unsigned long entry_point = base_addr + ehdr.e_entry;
 
 #ifdef CHAIN_LOADER
-	// fix up the auxv so that the ld.so thinks it's just been run
+	/* Fix up the auxv so that the ld.so thinks it's just been run.
+	 * If 'we are the program' it means make the phdrs look like the
+	 * ld.so was run as the executable, i.e. modify the auxv in place
+	 * to directly reference the inferior stuff. Otherwise the only
+	 * one we need to modify is AT_BASE, which points to the *interpreter*
+	 * so needs to be pointed at the inferior; the others don't change. */
 	ElfW(Phdr) *program_phdrs = NULL;
 	unsigned program_phentsize = 0;
 	unsigned program_phnum = 0;
+	/* FIXME: if "we are the progam", i.e. we were 'invoked' not 'requested',
+	 * it's easy to get our phdrs. If we were 'requested', however, we never
+	 * get hold of our own phdrs -- but it's easy to get hold of the program's.
+	 * This really does mean the program's, not the inferior loader's. */
+	ElfW(Phdr) *our_phdrs = NULL;
+	unsigned our_phentsize = 0;
+	unsigned our_phnum = 0;
 	for (ElfW(auxv_t) *p = p_auxv; p->a_type; ++p)
 	{
 		switch (p->a_type)
@@ -196,18 +216,24 @@ int main(int argc, char **argv)
 				fprintf(stderr, "AT_ENTRY is %p\n", (void*) p->a_un.a_val);
 				break;
 			case AT_PHDR:
-				if (we_are_the_program) p->a_un.a_val = phdrs_addr;
-				else program_phdrs = (void*) p->a_un.a_val;
+				if (we_are_the_program) {
+					our_phdrs = (ElfW(Phdr) *) p->a_un.a_val;
+					p->a_un.a_val = inferior_phdrs_addr;
+				} else program_phdrs = (void*) p->a_un.a_val;
 				fprintf(stderr, "AT_PHDR is %p\n", (void*) p->a_un.a_val);
 				break;
 			case AT_PHENT:
-				if (we_are_the_program) p->a_un.a_val = ehdr.e_phentsize;
-				else program_phentsize = p->a_un.a_val;
+				if (we_are_the_program) {
+					our_phentsize = p->a_un.a_val;
+					p->a_un.a_val = ehdr.e_phentsize;
+				} else program_phentsize = p->a_un.a_val;
 				fprintf(stderr, "AT_PHENT is %p\n", (void*) p->a_un.a_val);
 				break;
 			case AT_PHNUM:
-				if (we_are_the_program) p->a_un.a_val = ehdr.e_phnum;
-				else program_phnum = p->a_un.a_val;
+				if (we_are_the_program) {
+					our_phnum = p->a_un.a_val;
+					p->a_un.a_val = ehdr.e_phnum;
+				} else program_phnum = p->a_un.a_val;
 				fprintf(stderr, "AT_PHNUM is %p\n", (void*) p->a_un.a_val);
 				break;
 			case AT_BASE:
@@ -219,6 +245,59 @@ int main(int argc, char **argv)
 				if (we_are_the_program) p->a_un.a_val = (uintptr_t) argv[0];
 				fprintf(stderr, "AT_EXECFN is %p (%s)\n", (void*) p->a_un.a_val, (char*) p->a_un.a_val);
 				break;
+		}
+	}
+	/* In the 'invoked' case, to give debugging a chance of working,
+	 * try to create a DT_DEBUG entry in our _DYNAMIC section. */
+	ElfW(Dyn) *created_dt_debug = NULL;
+	if (we_are_the_program)
+	{
+		assert(our_phdrs);
+		/* The only thing we do is point it at the _r_debug structure in
+		 * the *inferior* ld.so.
+		 * It's up to the client code to populate this _r_debug. If it needs
+		 * introspection to work early on, it might do this early using
+		 * temporary values, e.g. during the 'covering tracks' phase that
+		 * immediately follows this code. Otherwise the inferior ld.so will
+		 * get around to populating its own _r_debug and debugging will start
+		 * working when that happens.
+		 * To find the _r_debug symbol, we use a simple but slow linear search
+		 * rather than the hash table. */
+		ElfW(Sym) *symtab = NULL;
+		ElfW(Sym) *symtab_end = NULL;
+		const unsigned char *strtab = NULL;
+		size_t our_dynamic_size = 0;
+		for (ElfW(Phdr) *phdr = our_phdrs; phdr != our_phdrs + our_phnum; ++phdr)
+		{
+			if (phdr->p_type == PT_DYNAMIC) { our_dynamic_size = phdr->p_memsz; break; }
+		}
+		for (ElfW(Dyn) *dyn = inferior_dynamic; dyn->d_tag != DT_NULL; ++dyn)
+		{
+			switch (dyn->d_tag)
+			{
+				case DT_SYMTAB:
+					symtab = (ElfW(Sym) *)(base_addr + dyn->d_un.d_ptr);
+					break;
+				case DT_STRTAB:
+					strtab = (const unsigned char *)(base_addr + dyn->d_un.d_ptr);
+					symtab_end = (ElfW(Sym) *)strtab;
+					break;
+			}
+		}
+		ElfW(Sym) *found_r_debug_sym = NULL;
+		for (ElfW(Sym) *p_sym = &symtab[0]; p_sym && p_sym <= symtab_end; ++p_sym)
+		{
+			if (0 == strcmp((const char*) &strtab[p_sym->st_name], "_r_debug"))
+			{
+				/* match */
+				found_r_debug_sym = p_sym;
+				break;
+			}
+		}
+		if (found_r_debug_sym)
+		{
+			created_dt_debug = create_dt_debug(base_addr, inferior_dynamic_vaddr,
+				our_dynamic_size, found_r_debug_sym->st_value);
 		}
 	}
 #ifdef CHAIN_LOADER_COVER_TRACKS

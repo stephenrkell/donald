@@ -35,7 +35,7 @@ $(C_DEPS): .%.d: %.c
 -include $(DEPS)
 
 # FIXME: localize all global symbols except maybe _start?
-donald.so: donald.lds premain.o main.o entry.o load.o
+donald.so: donald.lds premain.o main.o entry.o load.o debug.o
 	USE_LD=ld.bfd $(CC) $(CFLAGS) -Bsymbolic -nostdlib -nostartfiles -shared -o "$@" \
             $(filter-out %.lds,$+)  \
             -Wl,-Bstatic $(LIBC_ARCHIVE) -Wl,-Bsymbolic \
