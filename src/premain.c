@@ -286,6 +286,8 @@ static void tls_sanity_check(void)
 #define BP_TO_SP_FIXUP sizeof(char*)
 
 void *sp_on_entry HIDDEN;
+int argc HIDDEN;
+char **argv HIDDEN;
 /* This isn't the usual "main"; it's the raw entry point of the application. 
  * We link with -nostartfiles. We then define our own main. */
 int _start(void)
@@ -301,8 +303,6 @@ int _start(void)
 #error "Unrecognised architecture."
 #endif
 	
-	int argc;
-	char **argv;
 	sp_on_entry = bp_after_main_prologue + BP_TO_SP_FIXUP;
 	preinit(sp_on_entry, &argc, &argv); // get us a sane environment
 	// calls __init_tp... FIXME: do we really want to init musl?
