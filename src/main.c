@@ -296,7 +296,7 @@ int main(int argc, char **argv)
 		}
 		if (found_r_debug_sym)
 		{
-			created_dt_debug = create_dt_debug(base_addr, inferior_dynamic_vaddr,
+			created_dt_debug = find_or_create_dt_debug(base_addr, inferior_dynamic_vaddr,
 				our_dynamic_size, found_r_debug_sym->st_value);
 		}
 	}

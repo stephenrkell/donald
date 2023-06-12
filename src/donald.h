@@ -60,7 +60,9 @@ int load_one_phdr(unsigned long base_addr, int fd, unsigned long vaddr, unsigned
 	unsigned long memsz, unsigned long filesz, _Bool read, _Bool write, _Bool exec) HIDDEN;
 void enter(void *entry_point) __attribute__((noreturn)) HIDDEN;
 uintptr_t __get_from_tls_reg_offset(unsigned off);
-ElfW(Dyn) *create_dt_debug(uintptr_t inferior_load_addr, uintptr_t inferior_dynamic_vaddr,
+#ifdef CHAIN_LOADER
+ElfW(Dyn) *find_or_create_dt_debug(uintptr_t inferior_load_addr, uintptr_t inferior_dynamic_vaddr,
 	size_t our_dynamic_size, uintptr_t inferior_r_debug_vaddr) HIDDEN;
+#endif
 
 #endif
