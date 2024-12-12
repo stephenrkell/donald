@@ -187,6 +187,27 @@ int main(int argc, char **argv)
 				break;
 		}
 	}
+	uintptr_t our_load_address = 0;
+	for (ElfW(auxv_t) *p = p_auxv; p->a_type; ++p)
+	{
+		switch (p->a_type)
+		{
+			case AT_BASE:
+				if (p->a_un.a_val == 0)
+				{
+					assert(we_are_the_program);
+					our_load_address = (uintptr_t) &_begin & ~(page_size-1);
+				}
+				else
+				{
+					our_load_address = p->a_un.a_val;
+				}
+				break;
+			default:
+				break;
+		}
+	}
+
 	fprintf(stderr, "We think we are%sthe program\n", we_are_the_program ? " " : " not ");
 	if (entry == (uintptr_t) &_start)
 	{
@@ -206,6 +227,8 @@ int main(int argc, char **argv)
 	inferior_path = argv[argv_program_ind];
 #endif
 
+	/* We used to use the following base addresses.... */
+#if 0
 #if defined(__x86_64__)
 	uintptr_t inferior_base_addr_hint = 0x555555556000;
 #elif defined (__i386__)
@@ -213,6 +236,16 @@ int main(int argc, char **argv)
 #else
 #error "Unrecognised architecture."
 #endif
+#endif
+	/* ... but this doesn't work for allocsld, which wants to install
+	 * trampolines that bridge from the ld.so to its own DSO. To enable
+	 * a PC32 (or similarly width-constrained) jump, we could map the real
+	 * ld.so immediately before ourselves. That requires us to figure
+	 * out the maximum vaddr before we infer the base address hint. That's
+	 * annoying so let's approximate: pick an address 256MB before us in
+	 * the address space. */
+	assert(our_load_address >= 256 * 1024 * 1024);
+	uintptr_t inferior_base_addr_hint = our_load_address -  256 * 1024 * 1024;
 #define MAX_LDSO_PHDR 16
 	ElfW(Phdr) phdrs[MAX_LDSO_PHDR];
 	unsigned n_phdrs = MAX_LDSO_PHDR;
