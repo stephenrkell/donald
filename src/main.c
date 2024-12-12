@@ -370,7 +370,7 @@ int main(int argc, char **argv)
 		{
 			if (phdr->p_type == PT_DYNAMIC) { our_dynamic_size = phdr->p_memsz; break; }
 		}
-		dt_debug = create_dt_debug(inferior.base_addr, inferior.dynamic_vaddr,
+		dt_debug = find_or_create_dt_debug(inferior.base_addr, inferior.dynamic_vaddr,
 			our_dynamic_size, found_r_debug_sym->st_value);
 	}
 	else if (found_r_debug_sym)
