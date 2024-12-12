@@ -68,7 +68,7 @@ void populate_dt_debug(ElfW(Dyn) *d, uintptr_t inferior_load_addr,
 		.l_prev = NULL,
 		.l_next = NULL
 	};
-	extern void _dl_debug_state(void);
+	extern void _dl_debug_state(void) __attribute__((weak));
 	fake_ld_so_link_map.l_addr = inferior_load_addr;
 	fake_ld_so_link_map.l_ld = (ElfW(Dyn) *) (inferior_load_addr + inferior_dynamic_vaddr);
 	// FIXME: this causes glibc's ld.so to jump to (void*)-1... understand why
@@ -81,7 +81,7 @@ void populate_dt_debug(ElfW(Dyn) *d, uintptr_t inferior_load_addr,
 		.r_ldbase = inferior_load_addr
 	};
 #endif
-	_dl_debug_state(); // trigger the attached debugger, if any
+	if (_dl_debug_state) _dl_debug_state(); // trigger the attached debugger, if any
 //#endif
 }
 #endif
