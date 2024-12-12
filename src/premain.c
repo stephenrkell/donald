@@ -280,30 +280,22 @@ static void tls_sanity_check(void)
 	}
 }
 
-/* The function prologue pushes rbp on entry, decrementing the stack
- * pointer by 8. Then it saves rsp into rbp. So by the time we see rbp, 
- * it holds the entry stack pointer *minus 8 bytes*. */
-#define BP_TO_SP_FIXUP sizeof(char*)
-
 void *sp_on_entry HIDDEN;
 int argc HIDDEN;
 char **argv HIDDEN;
-/* This isn't the usual "main"; it's the raw entry point of the application. 
- * We link with -nostartfiles. We then define our own main. */
-int _start(void)
+/* This isn't the usual "main"; it's the raw entry point of the application...
+ * almost. Note that we link with -nostartfiles. Our actual _start is in
+ * start.S and is almost entirely uninteresting. It just materialises the
+ * initial stack pointer as a register, and fixes the stack alignment as
+ * necessary. This stack alignment tweak is something we can't do from C
+ * code, so is why start.S exists: the Linux entry ABI has the stack pointer
+ * aligned to 16 bytes, but the x86-64 psABI requires that calls are entered
+ * with rsp at an 8-modulo-16 boundary. */
+__attribute__((noinline))
+__attribute__((visibility("hidden")))
+int start_donald(void *initial_sp)
 {
-	/* gcc doesn't let us disable prologue/epilogue, so we have to fudge it.
-	 * We assume rsp is saved into rbp in the prologue. */
-	register unsigned char *bp_after_main_prologue;
-#if defined(__x86_64__)
-	__asm__ ("movq %%rbp, %0\n" : "=r"(bp_after_main_prologue));
-#elif defined(__i386__)
-	__asm__ ("mov %%ebp, %0\n" : "=r"(bp_after_main_prologue));
-#else
-#error "Unrecognised architecture."
-#endif
-	
-	sp_on_entry = bp_after_main_prologue + BP_TO_SP_FIXUP;
+	sp_on_entry = initial_sp;
 	preinit(sp_on_entry, &argc, &argv); // get us a sane environment
 	// calls __init_tp... FIXME: do we really want to init musl?
 	// Perhaps we should simply fake up TLS ourselves, using __set_thread_area
