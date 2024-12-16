@@ -84,18 +84,6 @@ load_file(const char *loadee_path, uintptr_t loadee_base_addr_hint,
 		nread = read(loadee_fd, &phdrs[i], ntoread);
 		if (nread != ntoread) die("could not read program header %d in %s\n", i, loadee_path);
 	}
-	// also snarf the shdrs (FIXME: we don't seem to use these anywhere?)
-	newloc = lseek(loadee_fd, loadee.ehdr.e_shoff, SEEK_SET);
-	ElfW(Shdr) shdrs[loadee.ehdr.e_shnum];
-	for (unsigned i = 0; i < loadee.ehdr.e_shnum; ++i)
-	{
-		off_t off = loadee.ehdr.e_shoff + i * loadee.ehdr.e_shentsize;
-		newloc = lseek(loadee_fd, off, SEEK_SET);
-		if (newloc != off) die("could not seek to section header %d in %s\n", i, loadee_path);
-		size_t ntoread = MIN(sizeof shdrs[0], loadee.ehdr.e_shentsize);
-		nread = read(loadee_fd, &shdrs[i], ntoread);
-		if (nread != ntoread) die("could not read section header %d in %s\n", i, loadee_path);
-	}
 	/* Now we've snarfed the phdrs. But remember that we want to map them
 	 * without holes. To do this, calculate the maximum vaddr we need,
 	 * then map a whole chunk of memory PROT_NONE in that space. We will
@@ -217,7 +205,6 @@ int main(int argc, char **argv)
 	
 	if (argc <= argv_program_ind) { die("no program specified\n"); }
 
-	int inferior_fd;
 	const char *inferior_path;
 #ifdef CHAIN_LOADER
 	/* We always chain-load the ld.so and let it load the program. Let's read it. */
