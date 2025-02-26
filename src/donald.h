@@ -76,6 +76,9 @@ struct loadee_info
 struct loadee_info
 load_file(const char *loadee_path, uintptr_t loadee_base_addr_hint,
 	ElfW(Phdr) *out_phdrs, unsigned *p_n_out_phdrs) HIDDEN;
+struct loadee_info
+load_from_fd(int fd, const char *loadee_path /* for diagnostic only*/,
+	uintptr_t loadee_base_addr_hint, ElfW(Phdr) *out_phdrs, unsigned *p_n_out_phdrs) HIDDEN;
 
 int main(int argc, char **argv) HIDDEN;
 int load_one_phdr(unsigned long base_addr, int fd, unsigned long vaddr, unsigned long offset,
