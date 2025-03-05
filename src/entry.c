@@ -3,7 +3,7 @@
 
 void __attribute__((noreturn)) enter(void *entry_point)
 {
-	fprintf(stderr, DONALD_NAME ": jumping to inferior entry point %p with rsp %p\n",
+	debug_printf(1, "jumping to inferior entry point %p with rsp %p\n",
 	(void*) entry_point, sp_on_entry);
 	fflush(stderr);
 	__asm__ volatile (

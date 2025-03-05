@@ -304,7 +304,7 @@ int start_donald(void *initial_sp)
 	__init_libc(environ, argv[0]);
 	tls_sanity_check();
 
-	printf("Hello from " DONALD_NAME "!\n");
+	debug_printf(1, "Hello from " DONALD_NAME "!\n");
 	
 	int ret = main(argc, argv);
 	

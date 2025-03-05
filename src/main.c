@@ -22,7 +22,7 @@ extern int _start(void);
 
 
 // in main() we have another special way to die
-#define die(s, ...) do { fprintf(stderr, DONALD_NAME ": " s , ##__VA_ARGS__); return -1; } while(0)
+#define die(s, ...) do { debug_printf(0, s , ##__VA_ARGS__); return -1; } while(0)
 // #define die(s, ...) do { fwrite(DONALD_NAME ": " s , sizeof DONALD_NAME ": " s, 1, stderr); return -1; } while(0)
 
 int main(int argc, char **argv)
@@ -66,7 +66,7 @@ int main(int argc, char **argv)
 		}
 	}
 
-	fprintf(stderr, "We think we are%sthe program\n", we_are_the_program ? " " : " not ");
+	debug_printf(1, "We think we are%sthe program\n", we_are_the_program ? " " : " not ");
 	if (entry == (uintptr_t) &_start)
 	{
 		// we were invoked as an executable
@@ -138,37 +138,37 @@ int main(int argc, char **argv)
 		{
 			case AT_ENTRY:
 				if (we_are_the_program) p->a_un.a_val = entry_point;
-				fprintf(stderr, "AT_ENTRY is %p\n", (void*) p->a_un.a_val);
+				debug_printf(1, "AT_ENTRY is %p\n", (void*) p->a_un.a_val);
 				break;
 			case AT_PHDR:
 				if (we_are_the_program) {
 					our_phdrs = (ElfW(Phdr) *) p->a_un.a_val;
 					p->a_un.a_val = inferior.phdrs_addr;
 				} else program_phdrs = (void*) p->a_un.a_val;
-				fprintf(stderr, "AT_PHDR is %p\n", (void*) p->a_un.a_val);
+				debug_printf(1, "AT_PHDR is %p\n", (void*) p->a_un.a_val);
 				break;
 			case AT_PHENT:
 				if (we_are_the_program) {
 					our_phentsize = p->a_un.a_val;
 					p->a_un.a_val = inferior.ehdr.e_phentsize;
 				} else program_phentsize = p->a_un.a_val;
-				fprintf(stderr, "AT_PHENT is %p\n", (void*) p->a_un.a_val);
+				debug_printf(1, "AT_PHENT is %p\n", (void*) p->a_un.a_val);
 				break;
 			case AT_PHNUM:
 				if (we_are_the_program) {
 					our_phnum = p->a_un.a_val;
 					p->a_un.a_val = inferior.ehdr.e_phnum;
 				} else program_phnum = p->a_un.a_val;
-				fprintf(stderr, "AT_PHNUM is %p\n", (void*) p->a_un.a_val);
+				debug_printf(1, "AT_PHNUM is %p\n", (void*) p->a_un.a_val);
 				break;
 			case AT_BASE:
 				if (we_are_the_program) p->a_un.a_val = 0;
 				else p->a_un.a_val = inferior.base_addr;
-				fprintf(stderr, "AT_BASE is %p\n", (void*) p->a_un.a_val);
+				debug_printf(1, "AT_BASE is %p\n", (void*) p->a_un.a_val);
 				break;
 			case AT_EXECFN:
 				if (we_are_the_program) p->a_un.a_val = (uintptr_t) argv[0];
-				fprintf(stderr, "AT_EXECFN is %p (%s)\n", (void*) p->a_un.a_val, (char*) p->a_un.a_val);
+				debug_printf(1, "AT_EXECFN is %p (%s)\n", (void*) p->a_un.a_val, (char*) p->a_un.a_val);
 				break;
 		}
 	}
