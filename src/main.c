@@ -81,7 +81,7 @@ int main(int argc, char **argv)
 	
 	if (argc <= argv_program_ind) { die("no program specified\n"); }
 
-	const char *inferior_path;
+	const char *inferior_path = NULL;
 #ifdef CHAIN_LOADER
 	/* We always chain-load the ld.so and let it load the program. Let's read it. */
 	/* TODO: allow for binaries that tell us which ld.so to chain to, even when
@@ -107,45 +107,81 @@ int main(int argc, char **argv)
 		 * executable should be mapped already. */
 		assert(phdr_ent);
 		assert(phnum_ent);
+		uintptr_t executable_load_address = (uintptr_t) -1;
 		int i = 0;
-		for (; i < phnum_ent->a_un.a_val; ++i)
+		/* Using a PHDR we can figure out the executable's load address. */
+		for (i = 0; i < phnum_ent->a_un.a_val; ++i)
 		{
 			ElfW(Phdr) *ph = ((ElfW(Phdr) *) phdr_ent->a_un.a_val) + i;
-			// is this an interp?
-			if (ph->p_type == PT_INTERP)
+			if (ph->p_type == PT_PHDR)
 			{
-				char *interp = our_load_address + ph->p_vaddr;
-				char *second_interp = NULL;
-				size_t interp_len = strnlen(interp, ph->p_memsz);
-				if (interp_len + 1 < ph->p_memsz)
-				{
-					second_interp = interp + interp_len + 1;
-				}
-				/* Check the first interp against our soname. It should match! */
-				char *our_soname = NULL;
-				ElfW(Dyn) *d = &_DYNAMIC[0];
-				for (; d->d_tag; ++d)
-				{
-					if (d->d_tag == DT_SONAME)
-					{
-						assert(0 == strcmp(basename(interp),
-							(char*)(our_load_address + (uintptr_t) d->d_un.d_ptr)
-								));
-						break;
-					}
-				}
-				if (!d->d_tag)
-				{
-					// warn that we did not find a soname to check against
-					debug_printf(1, "Running as requested interpreter but no soname "
-						"(requested: `%s', after the NUL: `%s')\n",
-						interp, second_interp);
-				}
+				executable_load_address =
+					/* actual addr of phdrs minus their vaddr */
+					(uintptr_t) phdr_ent->a_un.a_val - ph->p_vaddr;
+				break;
 			}
-			break;
 		}
-		assert(i == phnum_ent->a_un.a_val &&
-			"'requested' as interpreter, but did not find a PT_INTERP??");
+		if (executable_load_address == (uintptr_t) -1)
+		{
+			/* didn't get it! */
+			debug_printf(1, "No PT_PHDR so could not infer executable vaddr. "
+				"Skipping .interp processing.");
+			inferior_path = SYSTEM_LDSO_PATH;
+		}
+		else
+		{
+			for (i = 0; i < phnum_ent->a_un.a_val; ++i)
+			{
+				ElfW(Phdr) *ph = ((ElfW(Phdr) *) phdr_ent->a_un.a_val) + i;
+				// is this an interp?
+				if (ph->p_type == PT_INTERP)
+				{
+					char *interp = (char*)(executable_load_address + ph->p_vaddr);
+					char *second_interp = NULL;
+					size_t interp_len = strnlen(interp, ph->p_memsz);
+					if (interp_len + 1 < ph->p_memsz)
+					{
+						second_interp = interp + interp_len + 1;
+					}
+					/* Check the first interp against our soname. It should match! */
+					char *our_soname = NULL;
+					ElfW(Dyn) *d = &_DYNAMIC[0];
+					ElfW(Dyn) *saw_dynstr = NULL;
+					ElfW(Dyn) *saw_soname = NULL;
+					for (; d->d_tag; ++d)
+					{
+						if      (d->d_tag == DT_SONAME) saw_soname = d;
+						else if (d->d_tag == DT_STRTAB) saw_dynstr = d;
+						if (saw_soname && saw_dynstr) break;
+					}
+					if (saw_soname && saw_dynstr)
+					{
+						char *dynstr = (char*)(
+							our_load_address + (uintptr_t) saw_dynstr->d_un.d_ptr
+						);
+						assert(0 == strcmp(
+							basename(interp),
+							dynstr + saw_soname->d_un.d_val
+						));
+					}
+					else
+					{
+						// warn that we did not find a soname to check against
+						debug_printf(1, "Running as requested interpreter but no soname "
+							"(requested: `%s', after the NUL: `%s')\n",
+							interp, second_interp);
+					}
+					/* if we got here then we have at least interp */
+					if (second_interp && *second_interp) inferior_path = second_interp;
+					else inferior_path = SYSTEM_LDSO_PATH;
+					break; // exit the loop early
+				}
+				assert(i != phnum_ent->a_un.a_val &&
+					"'requested' as interpreter, but did not find a PT_INTERP??");
+			} // end for each phdr
+		} // end else 
+		// if we got here, we definitely saw a PT_INTERP *or* failed the PHDR bit, so...
+		assert(inferior_path);
 	}
 #else
 	/* We have a program to run, given to us on the command line.
