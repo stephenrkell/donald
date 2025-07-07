@@ -39,7 +39,7 @@ donald.so: donald.lds premain.o main.o entry.o load.o debug.o
 	USE_LD=ld.bfd $(CC) $(CFLAGS) -Bsymbolic -nostdlib -nostartfiles -shared -o "$@" \
             $(filter-out %.lds,$+)  \
             -Wl,-Bstatic $(LIBC_ARCHIVE) -Wl,-Bsymbolic \
-            -T $(filter %.lds,$+) #-Wl,-soname=ld-linux.so.2 
+            -T $(filter %.lds,$+) -Wl,-soname=donald.so # -Wl,-soname=ld-linux-x86-64.so.2
 
 donald.lds: $(shell which ld) $(THIS_MAKEFILE)
 	USE_LD=ld.bfd $(CC)   -nostdlib -nostartfiles -shared \

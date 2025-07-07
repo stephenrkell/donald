@@ -19,8 +19,6 @@
 
 extern int _start(void);
 
-
-
 // in main() we have another special way to die
 #define die(s, ...) do { debug_printf(0, s , ##__VA_ARGS__); return -1; } while(0)
 // #define die(s, ...) do { fwrite(DONALD_NAME ": " s , sizeof DONALD_NAME ": " s, 1, stderr); return -1; } while(0)
@@ -46,6 +44,8 @@ int main(int argc, char **argv)
 		}
 	}
 	uintptr_t our_load_address = 0;
+	ElfW(auxv_t) *phdr_ent = NULL;
+	ElfW(auxv_t) *phnum_ent = NULL;
 	for (ElfW(auxv_t) *p = p_auxv; p->a_type; ++p)
 	{
 		switch (p->a_type)
@@ -60,6 +60,12 @@ int main(int argc, char **argv)
 				{
 					our_load_address = p->a_un.a_val;
 				}
+				break;
+			case AT_PHDR:
+				phdr_ent = p;
+				break;
+			case AT_PHNUM:
+				phnum_ent = p;
 				break;
 			default:
 				break;
@@ -78,9 +84,72 @@ int main(int argc, char **argv)
 	const char *inferior_path;
 #ifdef CHAIN_LOADER
 	/* We always chain-load the ld.so and let it load the program. Let's read it. */
-	inferior_path = SYSTEM_LDSO_PATH;
+	/* TODO: allow for binaries that tell us which ld.so to chain to, even when
+	 * they request us. In allocsld we support this by allowing the next loader to
+	 * be appended within the .interp section, after the NUL terminator. In the
+	 * requested case, check for this. */
+	if (we_are_the_program)
+	{
+		/* The inferior is the dynamic linker that the argument program wants
+		 * us to run, assuming it is a dynamically linked program. Otherwise it's
+		 * just the program itself.
+		 *
+		 * XXX: what if the inferior is us? Do we chain ourselves? This should
+		 * work, so yes, let's keep it simple and just chain onto whatever
+		 * we find, even if it's us. */
+		inferior_path = SYSTEM_LDSO_PATH; // FIXME: check for a different PT_INTERP
+	}
+	else
+	{
+		/* We are being requested. So when we check the .interp section we
+		 * should find ourselves. If the .interp section is *bigger* than that,
+		 * interpret the string after the NUL as the path to chain to. The
+		 * executable should be mapped already. */
+		assert(phdr_ent);
+		assert(phnum_ent);
+		int i = 0;
+		for (; i < phnum_ent->a_un.a_val; ++i)
+		{
+			ElfW(Phdr) *ph = ((ElfW(Phdr) *) phdr_ent->a_un.a_val) + i;
+			// is this an interp?
+			if (ph->p_type == PT_INTERP)
+			{
+				char *interp = our_load_address + ph->p_vaddr;
+				char *second_interp = NULL;
+				size_t interp_len = strnlen(interp, ph->p_memsz);
+				if (interp_len + 1 < ph->p_memsz)
+				{
+					second_interp = interp + interp_len + 1;
+				}
+				/* Check the first interp against our soname. It should match! */
+				char *our_soname = NULL;
+				ElfW(Dyn) *d = &_DYNAMIC[0];
+				for (; d->d_tag; ++d)
+				{
+					if (d->d_tag == DT_SONAME)
+					{
+						assert(0 == strcmp(basename(interp),
+							(char*)(our_load_address + (uintptr_t) d->d_un.d_ptr)
+								));
+						break;
+					}
+				}
+				if (!d->d_tag)
+				{
+					// warn that we did not find a soname to check against
+					debug_printf(1, "Running as requested interpreter but no soname "
+						"(requested: `%s', after the NUL: `%s')\n",
+						interp, second_interp);
+				}
+			}
+			break;
+		}
+		assert(i == phnum_ent->a_un.a_val &&
+			"'requested' as interpreter, but did not find a PT_INTERP??");
+	}
 #else
-	/* We have a program to run. Let's read it. */
+	/* We have a program to run, given to us on the command line.
+	 * Let's read it. */
 	inferior_path = argv[argv_program_ind];
 #endif
 
