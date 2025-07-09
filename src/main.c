@@ -124,12 +124,13 @@ int main(int argc, char **argv)
 		if (executable_load_address == (uintptr_t) -1)
 		{
 			/* didn't get it! */
-			debug_printf(1, "No PT_PHDR so could not infer executable vaddr. "
+			debug_printf(0, "No PT_PHDR so could not infer executable vaddr. "
 				"Skipping .interp processing.");
 			inferior_path = SYSTEM_LDSO_PATH;
 		}
 		else
 		{
+#if 0 /* srk: see Experiments/writable-interp */
 			for (i = 0; i < phnum_ent->a_un.a_val; ++i)
 			{
 				ElfW(Phdr) *ph = ((ElfW(Phdr) *) phdr_ent->a_un.a_val) + i;
@@ -167,7 +168,7 @@ int main(int argc, char **argv)
 					else
 					{
 						// warn that we did not find a soname to check against
-						debug_printf(1, "Running as requested interpreter but no soname "
+						debug_printf(0, "Running as requested interpreter but no soname "
 							"(requested: `%s', after the NUL: `%s')\n",
 							interp, second_interp);
 					}
@@ -179,6 +180,8 @@ int main(int argc, char **argv)
 				assert(i != phnum_ent->a_un.a_val &&
 					"'requested' as interpreter, but did not find a PT_INTERP??");
 			} // end for each phdr
+#endif
+			inferior_path = SYSTEM_LDSO_PATH;
 		} // end else 
 		// if we got here, we definitely saw a PT_INTERP *or* failed the PHDR bit, so...
 		assert(inferior_path);
