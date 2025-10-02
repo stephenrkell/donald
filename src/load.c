@@ -195,7 +195,6 @@ load_from_fd(int loadee_fd, const char *loadee_path /* for diagnostic only */,
 			loadee.dynamic_size = phdrs[i].p_memsz;
 		}
 	}
-	close(loadee_fd);
 	return loadee;
 }
 
@@ -208,7 +207,10 @@ load_file(const char *loadee_path, uintptr_t loadee_base_addr_hint,
 
 	int loadee_fd = open(loadee_path, O_RDONLY);
 	if (loadee_fd == -1) { die("could not open %s\n", loadee_path); }
-	return load_from_fd(loadee_fd, loadee_path, loadee_base_addr_hint, out_phdrs, p_n_out_phdrs);
+	struct loadee_info info = load_from_fd(
+		loadee_fd, loadee_path, loadee_base_addr_hint, out_phdrs, p_n_out_phdrs);
+	close(loadee_fd);
+	return info;
 }
 
 #undef die
