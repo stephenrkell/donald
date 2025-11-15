@@ -207,10 +207,12 @@ int main(int argc, char **argv)
 	 * a PC32 (or similarly width-constrained) jump, we could map the real
 	 * ld.so immediately before ourselves. That requires us to figure
 	 * out the maximum vaddr before we infer the base address hint. That's
-	 * annoying so let's approximate: pick an address 256MB before us in
-	 * the address space. */
-	assert(our_load_address >= 256 * 1024 * 1024);
-	uintptr_t inferior_base_addr_hint = our_load_address -  256 * 1024 * 1024;
+	 * annoying so let's approximate: pick an address 32MB before us in
+	 * the address space. (We used to use 256MB but Valgrind wants to load
+	 * PIEs at 64MB, so allowing for an unmapped zero region, ....) */
+	debug_printf(0, "Loader's load address is %p\n", (void*) our_load_address);
+	assert(our_load_address >= 32 * 1024 * 1024);
+	uintptr_t inferior_base_addr_hint = our_load_address -  32 * 1024 * 1024;
 #define MAX_LDSO_PHDR 16
 	ElfW(Phdr) phdrs[MAX_LDSO_PHDR];
 	unsigned n_phdrs = MAX_LDSO_PHDR;
