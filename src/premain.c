@@ -17,7 +17,7 @@
 #define RELF_DEFINE_STRUCTURES
 #include "relf.h"
 
-extern int _begin HIDDEN;   // defined by our hacked linker script (in Makefile)
+extern int _begin /*HIDDEN*/;   // defined by our hacked linker script (in Makefile)
 
 /* FIXME: instead of copying these guys out of auxv, can we *define symbols* 
  * located at the top of the stack, so that clients can just *link* to them? 
@@ -152,6 +152,37 @@ do_one_rel(ElfW(Rel) *p_rel, unsigned char *at_base, ElfW(Sym) *p_dynsym)
 #endif
 }
 
+/* Allow overriding the dynamic section tags that we look for, for
+ * relocs. This is used by the combined allocsld/liballocs binary,
+ * which hides its relocation information in a special section. */
+#ifndef REL_DT_VALUE
+#define REL_DT_VALUE DT_REL
+#endif
+#ifndef RELSZ_DT_VALUE
+#define RELSZ_DT_VALUE DT_RELSZ
+#endif
+#ifndef RELENT_DT_VALUE
+#define RELENT_DT_VALUE DT_RELENT
+#endif
+#ifndef RELA_DT_VALUE
+#define RELA_DT_VALUE DT_RELA
+#endif
+#ifndef RELASZ_DT_VALUE
+#define RELASZ_DT_VALUE DT_RELASZ
+#endif
+#ifndef RELAENT_DT_VALUE
+#define RELAENT_DT_VALUE DT_RELAENT
+#endif
+#ifndef JMPREL_DT_VALUE
+#define JMPREL_DT_VALUE DT_JMPREL
+#endif
+#ifndef PLTREL_DT_VALUE
+#define PLTREL_DT_VALUE DT_PLTREL
+#endif
+#ifndef PLTRELSZ_DT_VALUE
+#define PLTRELSZ_DT_VALUE DT_PLTRELSZ
+#endif
+
 static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned char *at_base)
 {
 	/* We scan _DYNAMIC to get our own symbol table. HACK: we manually relocate &_DYNAMIC
@@ -179,22 +210,22 @@ static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned ch
 	{
 		if (p_dyn->d_tag == DT_SYMTAB) dynsym_start = (void*)(at_base + p_dyn->d_un.d_ptr);
 		else if (p_dyn->d_tag == DT_SYMENT) dynsym_nsyms = p_dyn->d_un.d_val;
-		else if (p_dyn->d_tag == DT_RELA) rela_dyn_start = (void *)(at_base + p_dyn->d_un.d_ptr);
-		else if (p_dyn->d_tag == DT_RELASZ) rela_dyn_sz = p_dyn->d_un.d_val;
-		else if (p_dyn->d_tag == DT_RELAENT) rela_dyn_entsz = p_dyn->d_un.d_val;
-		else if (p_dyn->d_tag == DT_REL) rel_dyn_start = (void *)(at_base + p_dyn->d_un.d_ptr);
-		else if (p_dyn->d_tag == DT_RELSZ) rel_dyn_sz = p_dyn->d_un.d_val;
-		else if (p_dyn->d_tag == DT_RELENT) rel_dyn_entsz = p_dyn->d_un.d_val;
-		else if (p_dyn->d_tag == DT_JMPREL) rela_plt_start = (void *)(at_base + p_dyn->d_un.d_ptr);
-		else if (p_dyn->d_tag == DT_PLTRELSZ) rela_plt_sz = p_dyn->d_un.d_val;
-		else if (p_dyn->d_tag == DT_PLTREL) pltrel = p_dyn->d_un.d_val;
+		else if (p_dyn->d_tag == RELA_DT_VALUE) rela_dyn_start = (void *)(at_base + p_dyn->d_un.d_ptr);
+		else if (p_dyn->d_tag == RELASZ_DT_VALUE) rela_dyn_sz = p_dyn->d_un.d_val;
+		else if (p_dyn->d_tag == RELAENT_DT_VALUE) rela_dyn_entsz = p_dyn->d_un.d_val;
+		else if (p_dyn->d_tag == REL_DT_VALUE) rel_dyn_start = (void *)(at_base + p_dyn->d_un.d_ptr);
+		else if (p_dyn->d_tag == RELSZ_DT_VALUE) rel_dyn_sz = p_dyn->d_un.d_val;
+		else if (p_dyn->d_tag == RELENT_DT_VALUE) rel_dyn_entsz = p_dyn->d_un.d_val;
+		else if (p_dyn->d_tag == JMPREL_DT_VALUE) rela_plt_start = (void *)(at_base + p_dyn->d_un.d_ptr);
+		else if (p_dyn->d_tag == PLTRELSZ_DT_VALUE) rela_plt_sz = p_dyn->d_un.d_val;
+		else if (p_dyn->d_tag == PLTREL_DT_VALUE) pltrel = p_dyn->d_un.d_val;
 		++p_dyn;
 	}
 	if (rela_dyn_entsz > 0) rela_dyn_nents = rela_dyn_sz / rela_dyn_entsz;
 	if (rel_dyn_entsz > 0) rel_dyn_nents = rel_dyn_sz / rel_dyn_entsz;
 	if (rela_dyn_entsz > 0 && rel_dyn_entsz > 0) abort();
 	unsigned long dynrel;
-	if (rela_dyn_entsz > 0) dynrel = DT_RELA; else dynrel = DT_REL;
+	if (rela_dyn_entsz > 0) dynrel = RELA_DT_VALUE; else dynrel = REL_DT_VALUE;
 	
 	/* We loop over the relocs table and relocate what needs relocating. 
 	 * uClibc claims that we should *only* relocate things that are not 
@@ -204,20 +235,20 @@ static inline void __attribute__((always_inline)) bootstrap_relocate(unsigned ch
 	 * by the dynamic linker? What would it mean to interpose on a reference made
 	 * from the dynamic linker? HMM. */
 	//ElfW(Rela) *p_rela = rela_dyn_start;
-	for (int i = 0; i < ((dynrel == DT_REL) ? rel_dyn_nents : rela_dyn_nents); ++i)
+	for (int i = 0; i < ((dynrel == REL_DT_VALUE) ? rel_dyn_nents : rela_dyn_nents); ++i)
 	{
-		if (dynrel == DT_REL)
+		if (dynrel == REL_DT_VALUE)
 		     do_one_rel (rel_dyn_start  + i, at_base, dynsym_start);
 		else do_one_rela(rela_dyn_start + i, at_base, dynsym_start);
 	}
 	/* Also do .rela.plt */
 	/* NOTE: it's called rela_plt_start, but it could be rel or rela */
 	for (int i = 0;
-			i < ((pltrel == DT_REL) ? (rela_plt_sz / sizeof (ElfW(Rel)))
+			i < ((pltrel == REL_DT_VALUE) ? (rela_plt_sz / sizeof (ElfW(Rel)))
 			                        : (rela_plt_sz / sizeof (ElfW(Rela))));
 			++i)
 	{
-		if (pltrel == DT_REL)
+		if (pltrel == REL_DT_VALUE)
 		    do_one_rel(((ElfW(Rel) *) rela_plt_start) + i, at_base, dynsym_start);
 		else do_one_rela(((ElfW(Rela) *) rela_plt_start) + i, at_base, dynsym_start);
 	}
