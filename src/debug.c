@@ -15,7 +15,75 @@
 
 /* The purpose of this code is to set the *executable's* DT_DEBUG entry
  * to point to the *inferior ld.so*'s struct r_debug. It only makes sense
- * when there is an inferior, i.e. when we are chain-loading. */
+ * when there is an inferior, i.e. when we are chain-loading.
+ *
+ * NOTE that the approach in this file is not quite enough to work fully
+ * in the "requested" case. Currently, the inferior ld.so's own path in the
+ * link map will be wrong if we're the requested loader (it will point to
+ * us! I think... and this *possibly* affects the _dl_debug_state() protocol
+ * also). There is a solution in allocsld, but very specific to that project.
+ * See allocsld/chain.c.
+ *
+ * XXX: even in the "invoked" case, what we have here seems to be not quite
+ * enough. I have to use 'add-symbol-file' manually to get the inferior
+ * ld.so's functions to show up in the backtrace. Prior to that, I don't have
+ * an "_r_debug" symbol according to gdb, although the below code has set the
+ * DT_DEBUG to point to the _r_debug in the ld.so... 'info shared' gives:
+ *
+	(gdb) info shared
+	From                To                  Syms Read   Shared Object Library
+	0x00007ffff58ae060  0x00007ffff58d2f51  No          /lib64/ld-linux-x86-64.so.2
+
+ * After manually loading symbols, I do get _r_debug but it is unrelocated.
+ 
+(gdb) print _r_debug
+Cannot access memory at address 0x33118
+(gdb) print &_r_debug
+$2 = (struct r_debug *) 0x33118 <_r_debug>
+(gdb) shell readelf -WS /lib64/ld-linux-x86-64.so.2 | grep _r_debug
+(gdb) shell readelf -Ws /lib64/ld-linux-x86-64.so.2 | grep _r_debug
+    16: 0000000000033118    40 OBJECT  GLOBAL DEFAULT   21 _r_debug@@GLIBC_2.2.5
+
+ * ... is this normally ADJUST_DYN_INFO'd? Not that I can see.
+ * The same unrelocatedness problem is evident for other data symbols in the ld.so,
+ * although not for function symbols.
+ * AHAH. I can fix this by manually loading the symbols appropriately, using the '-o'
+ * option to add-symbol-file. I've updated my add-ld-so-symbol-file to match.
+ * So the remaining problem is really why we get "Syms Read: No".
+ *
+ * libsystrap's example/chain.c notes:
+ * /* In our loader's _DYNAMIC as we create it initially, the d_ptr is already
+ *  * a pointer to the inferior ld.so's r_debug. It will never get ADJUST_DYN_INFO'd
+ *  * by the ld.so because that ld.so does not know that our _DYNAMIC exists.
+ *
+ * ... i.e. the chain loader's DT_DEBUG is *populated on startup* to point to
+ * the inferior ld.so's _r_debug, just like the executable's DT_DEBUG is by the
+ * real ld.so). So let's check it really is set to that?
+ *
+ * (gdb) print _DYNAMIC[20]
+$13 = {
+  d_tag = 21,
+  d_un = {
+    d_val = 140737313112344,
+    d_ptr = 140737313112344
+  }
+}
+(gdb) print (void*) 140737313112344
+$14 = (void *) 0x7ffff58e0118
+
+ * Looks OK! Maybe the issue is just that we had interrupted the ld.so while
+ * it was doing its work? Indeed it is still in the RT_ADD state.
+ *
+ * To test this thoroughly, there are many cases to consider.
+ *
+ *   {requested, invoked} x {start-under-gdb, attach-gdb} x {during-chain-load, during-ld-so-startup, during-program-execution}
+ *
+ * To test these, we could build
+ *  -- a version of ourselves that stops itself just before running the executable
+ *  -- ... and that loads the ld.so at a known address, easily breakpointed without symbols
+ *  -- a simple binary that optionally stops itself on startup, 
+ * A sane initial test would be that we could get a backtrace including the top frame (_dl_start?)
+ */
 #ifdef CHAIN_LOADER
 __attribute__((visibility("hidden")))
 ElfW(Dyn) *find_or_create_dt_debug(uintptr_t inferior_load_addr, uintptr_t inferior_dynamic_vaddr,

@@ -190,7 +190,7 @@ int main(int argc, char **argv)
 	/* We have a program to run, given to us on the command line.
 	 * Let's read it. */
 	inferior_path = argv[argv_program_ind];
-#endif
+#endif /* CHAIN_LOADER */
 
 	/* We used to use the following base addresses.... */
 #if 0
@@ -222,23 +222,37 @@ int main(int argc, char **argv)
 
 	// do relocations!
 
-	// grab the entry point
-	register unsigned long entry_point = inferior.base_addr + inferior.ehdr.e_entry;
+	// grab the entry point of the inferior... note that if we are a
+	// chain loader, the picture looks like this:
+	/*             us             inferior       executable
+	               +---------+    +---------+    +---------+
+	kernel loads-->|entry    |--->|entry    |--->|entry    |
+	               +---------+    +---------+    +---------+
+	 * and of the *three* entry points, 'entry' is always that of
+	 * us or of the executable but never of the inferior. */
+	unsigned long inferior_entry_point = inferior.base_addr + inferior.ehdr.e_entry;
+#ifdef CHAIN_LOADER
+	assert(inferior_entry_point != entry);
+	// Q. What if we're being used to chain-load a statically linked executable?
+	// A. That only works if we are the program, so 'entry' is ours, so the assertion holds.
+#endif
 
 #ifdef CHAIN_LOADER
-	/* Fix up the auxv so that the ld.so thinks it's just been run.
+	/* Fix up the auxv so that the ld.so thinks it's just been invoked.
 	 * If 'we are the program' it means make the phdrs look like the
 	 * ld.so was run as the executable, i.e. modify the auxv in place
 	 * to directly reference the inferior stuff. Otherwise the only
 	 * one we need to modify is AT_BASE, which points to the *interpreter*
-	 * so needs to be pointed at the inferior ld.so; the others don't change. */
+	 * so needs to be pointed at the inferior ld.so; the others don't change.
+	 *
+	 * As we scan the auxv, pull out the program headers we find there.
+	 * These may be ours (if we're invoked) or the executable's (if we're
+	 * requested). That's the executable, not the inferior loader.
+	 * If we were 'requested', we never get hold of our own phdrs. But we
+	 * create a separate variable just so we're statically clear which we want. */
 	ElfW(Phdr) *program_phdrs = NULL;
 	unsigned program_phentsize = 0;
 	unsigned program_phnum = 0;
-	/* FIXME: if "we are the progam", i.e. we were 'invoked' not 'requested',
-	 * it's easy to get our phdrs. If we were 'requested', however, we never
-	 * get hold of our own phdrs -- but it's easy to get hold of the program's.
-	 * This really does mean the program's, not the inferior loader's. */
 	ElfW(Phdr) *our_phdrs = NULL;
 	unsigned our_phentsize = 0;
 	unsigned our_phnum = 0;
@@ -247,7 +261,7 @@ int main(int argc, char **argv)
 		switch (p->a_type)
 		{
 			case AT_ENTRY:
-				if (we_are_the_program) p->a_un.a_val = entry_point;
+				if (we_are_the_program) p->a_un.a_val = inferior_entry_point;
 				debug_printf(1, "AT_ENTRY is %p\n", (void*) p->a_un.a_val);
 				break;
 			case AT_PHDR:
@@ -299,37 +313,39 @@ int main(int argc, char **argv)
 
 	/* To find the _r_debug symbol, we use a simple but slow linear search
 	 * rather than the hash table. */
-	ElfW(Dyn) *dt_debug = NULL;
-	ElfW(Sym) *symtab = NULL;
-	ElfW(Sym) *symtab_end = NULL;
-	const unsigned char *strtab = NULL;
+	ElfW(Dyn) *our_dt_debug = NULL;
+	ElfW(Dyn) *program_dt_debug = NULL;
+	ElfW(Sym) *inferior_symtab = NULL;
+	ElfW(Sym) *inferior_symtab_end = NULL;
+	const unsigned char *inferior_strtab = NULL;
 	for (ElfW(Dyn) *dyn = inferior.dynamic; dyn->d_tag != DT_NULL; ++dyn)
 	{
 		switch (dyn->d_tag)
 		{
 			case DT_SYMTAB:
-				symtab = (ElfW(Sym) *)(inferior.base_addr + dyn->d_un.d_ptr);
+				inferior_symtab = (ElfW(Sym) *)(inferior.base_addr + dyn->d_un.d_ptr);
 				break;
 			case DT_STRTAB:
-				strtab = (const unsigned char *)(inferior.base_addr + dyn->d_un.d_ptr);
-				symtab_end = (ElfW(Sym) *)strtab;
+				inferior_strtab = (const unsigned char *)(inferior.base_addr + dyn->d_un.d_ptr);
+				/* FIXME: instead of this hack for sizing the symtab, find and use the shdr */
+				inferior_symtab_end = (ElfW(Sym) *) inferior_strtab;
 				break;
 			default: break;
 		}
 	}
-	ElfW(Sym) *found_r_debug_sym = NULL;
-	for (ElfW(Sym) *p_sym = &symtab[0]; p_sym && p_sym <= symtab_end; ++p_sym)
+	ElfW(Sym) *found_inferior_r_debug_sym = NULL;
+	for (ElfW(Sym) *p_sym = &inferior_symtab[0]; p_sym && p_sym <= inferior_symtab_end; ++p_sym)
 	{
-		if (0 == strcmp((const char*) &strtab[p_sym->st_name], "_r_debug"))
+		if (0 == strcmp((const char*) &inferior_strtab[p_sym->st_name], "_r_debug"))
 		{
 			/* match */
-			found_r_debug_sym = p_sym;
+			found_inferior_r_debug_sym = p_sym;
 			break;
 		}
 	}
 	/* In the 'invoked' case, to give debugging a chance of working,
 	 * try to create a DT_DEBUG entry in our _DYNAMIC section. */
-	if (found_r_debug_sym && we_are_the_program)
+	if (found_inferior_r_debug_sym && we_are_the_program)
 	{
 		assert(our_phdrs);
 		size_t our_dynamic_size = 0;
@@ -337,13 +353,14 @@ int main(int argc, char **argv)
 		{
 			if (phdr->p_type == PT_DYNAMIC) { our_dynamic_size = phdr->p_memsz; break; }
 		}
-		dt_debug = find_or_create_dt_debug(inferior.base_addr, inferior.dynamic_vaddr,
-			our_dynamic_size, found_r_debug_sym->st_value);
+		our_dt_debug = find_or_create_dt_debug(inferior.base_addr, inferior.dynamic_vaddr,
+			our_dynamic_size, found_inferior_r_debug_sym->st_value);
 	}
-	else if (found_r_debug_sym)
+	else if (found_inferior_r_debug_sym) // !we_are_the_program
 	{
 		/* We are just the requested dynamic linker, but we want the DT_DEBUG
 		 * in the actual executable. How do we get that? */
+		assert(!we_are_the_program);
 		assert(program_phdrs);
 		/* How do we get the program's load address? Look for a PT_PHDR.
 		 * FIXME: can we get this instead from auxv above? That would be nicer. */
@@ -370,7 +387,7 @@ int main(int argc, char **argv)
 					{
 						if (dyn->d_tag == DT_DEBUG)
 						{
-							dt_debug = dyn;
+							program_dt_debug = dyn;
 							break;
 						}
 					}
@@ -382,8 +399,11 @@ int main(int argc, char **argv)
 			// we didn't find it...
 		}
 	}
-	if (dt_debug && found_r_debug_sym) populate_dt_debug(dt_debug, inferior.base_addr,
-		inferior.dynamic_vaddr, found_r_debug_sym->st_value);
+	if (program_dt_debug && found_inferior_r_debug_sym)
+	{
+		populate_dt_debug(program_dt_debug, inferior.base_addr,
+			inferior.dynamic_vaddr, found_inferior_r_debug_sym->st_value);
+	}
 
 	/* Fix debugging: make it look to the debugger like the system ld.so was
 	 * invoked on the command line directly. NOTE that this works in the 'invoked'
@@ -398,8 +418,52 @@ int main(int argc, char **argv)
 #ifdef CHAIN_LOADER_COVER_TRACKS_INC
 	#include CHAIN_LOADER_COVER_TRACKS_INC
 #endif
-#endif
+#endif /* CHAIN_LOADER */
 
 	// jump to the entry point
-	enter((void*) entry_point);
+	enter((void*) inferior_entry_point);
 }
+#if 0
+struct load_ctxt
+{
+	int argc;
+	char **argv;
+	int argv_program_ind;         // used to get inferior_path, but our callee might want it
+	uintptr_t entry;              // XXX: duplicates inferior_entry_point? This is &_start by default, overridden by AT_ENTRY, in either invoked or requested cases; if invoked, AT_ENTRY matches &_start and this is how we detect it
+	_Bool we_are_the_program;
+	uintptr_t our_load_address;
+	ElfW(auxv_t) *phdr_ent;       // XXX: whose phdrs are these? in both invoked and requested cases?
+	ElfW(auxv_t) *phnum_ent;
+	const char *inferior_path;
+	uintptr_t inferior_base_addr_hint;
+	ElfW(Phdr) phdrs[MAX_LDSO_PHDR];
+	unsigned n_phdrs;
+	struct loadee_info inferior;
+	/*
+		struct loadee_info
+		{
+			uintptr_t dynamic_vaddr;
+			uintptr_t base_addr;
+			uintptr_t phdrs_addr;
+			ElfW(Ehdr) ehdr;
+			ElfW(Dyn)* dynamic;
+			size_t dynamic_size;
+			char errmsg[400];
+		};
+	 */
+	unsigned long inferior_entry_point;     // absolute virtual address of the inferior's entry point
+	ElfW(Phdr) *program_phdrs;     // <-- only if CHAIN_LOADER...
+	unsigned program_phentsize;    // ditto
+	unsigned program_phnum;        // ditto
+	ElfW(Phdr) *our_phdrs;         // ditto
+	unsigned our_phentsize;        // ditto
+	unsigned our_phnum;            // ditto <----------these only sometimes get filled in
+	ElfW(Dyn) *our_dt_debug;       // ditto
+	ElfW(Dyn) *program_dt_debug;   // ditto
+	ElfW(Sym) *inferior_symtab;             // ditto  ... we use these for finding _r_debug in the inferior
+	ElfW(Sym) *inferior_symtab_end;         // ditto
+	const unsigned char *inferior_strtab;   // ditto
+	ElfW(Sym) *inferior_r_debug_sym;        // ditto
+}
+
+#endif
