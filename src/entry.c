@@ -1,10 +1,10 @@
 #include <stdio.h>
 #include "donald.h"
 
-void __attribute__((noreturn)) enter(void *entry_point)
+void __attribute__((noreturn)) enter(struct load_ctxt *ctxt)
 {
 	debug_printf(1, "jumping to inferior entry point %p with rsp %p\n",
-	(void*) entry_point, sp_on_entry);
+		(void*) ctxt->loadee_entry_point, /* global */ sp_on_entry);
 	fflush(stderr);
 	__asm__ volatile (
 #if defined(__x86_64__)
@@ -16,7 +16,7 @@ void __attribute__((noreturn)) enter(void *entry_point)
 #else
 #error "Unrecognised architecture."
 #endif
-	  "jmp *%1\n" : : "m"(sp_on_entry), "r"(entry_point)
+	  "jmp *%1\n" : : "m"(sp_on_entry), "r"(ctxt->loadee_entry_point)
 	);
 	__builtin_unreachable();
 }

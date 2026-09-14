@@ -1,5 +1,6 @@
 #define _GNU_SOURCE /* for MAP_ANONYMOUS */
 #include "donald.h"
+#include <stdlib.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
@@ -11,6 +12,45 @@
 #ifndef MIN
 #define MIN(a, b) ((a)<(b)?(a):(b))
 #endif
+
+#define die(s, ...) do { debug_printf(0, s , ##__VA_ARGS__); abort(); } while(0)
+
+extern int _start; /* HACK */
+/* These two helpers should really be in main.c, but then we can't use --wrap
+ * to override calls to them from main,c, owing to the documented limitation of
+ * --wrap as applied to defined symbols. */
+ 
+/* Helper that figures out the pathname of the binary we want to load as
+ * the executable. It is possible to extend our behaviour by wrapping this. */
+__attribute__((visibility("hidden")))
+const char *get_loadee_path(struct load_ctxt *ctxt)
+{
+	int argv_program_ind;
+	if (ctxt->entry == (uintptr_t) &_start)
+	{
+		// we were invoked as an executable
+		assert(ctxt->we_are_the_program); // FIXME: make this the test, and the other the assert
+		argv_program_ind = 1;
+	} else argv_program_ind = 0; // we were invoked as an interp
+	
+	if (ctxt->argc <= argv_program_ind) { die("no program specified\n"); }
+	return ctxt->argv[argv_program_ind];
+}
+
+/* Helper that tells us where we should hint mmap() to map the executable
+ * segments, i.e. relative to the returned base address. Again, wrapping this
+ * could be a useful extension point. */
+__attribute__((visibility("hidden")))
+uintptr_t get_loadee_base_addr_hint(struct load_ctxt *ctxt)
+{
+#if defined(__x86_64__)
+	return 0x555555556000;
+#elif defined (__i386__)
+	return 0x55556000;
+#else
+#error "Unrecognised architecture."
+#endif
+}
 
 int load_one_phdr(unsigned long base_addr, int fd, unsigned long vaddr, unsigned long offset,
 	unsigned long memsz, unsigned long filesz, _Bool read, _Bool write, _Bool exec)
