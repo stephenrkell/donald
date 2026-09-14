@@ -25,17 +25,18 @@ THIS_MAKEFILE := $(lastword $(MAKEFILE_LIST))
 # 
 #exec /usr/bin/${USE_LD:-ld.bfd} "$@"
 
-OBJS := premain.o main.o entry.o load.o
-C_DEPS := $(patsubst %.o,.%.d,$(OBJS))
+OBJS := premain.o main.o entry.o load.o start.o
+DEPS := $(patsubst %.o,.%.d,$(OBJS))
 DEPS := $(C_DEPS)
 
-$(C_DEPS): .%.d: %.c
+$(DEPS): .%.d: %.c
 	$(CC) -MM $(CFLAGS) "$<" > "$@" || rm -f "$@"
-	
+$(DEPS): .%.d: %.s
+	$(CC) -MM $(CFLAGS) "$<" > "$@" || rm -f "$@"
 -include $(DEPS)
 
 # FIXME: localize all global symbols except maybe _start?
-donald.so: donald.lds premain.o main.o entry.o load.o debug.o
+donald.so: donald.lds $(OBJS)
 	USE_LD=ld.bfd $(CC) $(CFLAGS) -Bsymbolic -nostdlib -nostartfiles -shared -o "$@" \
             $(filter-out %.lds,$+)  \
             -Wl,-Bstatic $(LIBC_ARCHIVE) -Wl,-Bsymbolic \
