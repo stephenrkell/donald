@@ -17,7 +17,7 @@
 #define RELF_DEFINE_STRUCTURES
 #include "relf.h"
 
-extern int _begin /*HIDDEN*/;   // defined by our hacked linker script (in Makefile)
+extern char _begin[] /*HIDDEN*/;   // defined by our hacked linker script (in Makefile)
 
 /* FIXME: instead of copying these guys out of auxv, can we *define symbols* 
  * located at the top of the stack, so that clients can just *link* to them? 

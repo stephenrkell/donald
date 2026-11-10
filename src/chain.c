@@ -36,19 +36,20 @@ const char *__wrap_get_loadee_path(struct load_ctxt *ctxt)
 		 * should find ourselves. If the .interp section is *bigger* than that,
 		 * interpret the string after the NUL as the path to chain to. The
 		 * executable should be mapped already. */
-		assert(ctxt->phdr_ent);
-		assert(ctxt->phnum_ent);
+		assert(ctxt->phdr_auxv_ent);
+		assert(ctxt->phnum_auxv_ent);
+		/* FIXME: consolidate this with code in load.c (get_loader_path()) */
 		uintptr_t executable_load_address = (uintptr_t) -1;
 		int i = 0;
 		/* Using a PHDR we can figure out the executable's load address. */
-		for (i = 0; i < ctxt->phnum_ent->a_un.a_val; ++i)
+		for (i = 0; i < ctxt->phnum_auxv_ent->a_un.a_val; ++i)
 		{
-			ElfW(Phdr) *ph = ((ElfW(Phdr) *) ctxt->phdr_ent->a_un.a_val) + i;
+			ElfW(Phdr) *ph = ((ElfW(Phdr) *) ctxt->phdr_auxv_ent->a_un.a_val) + i;
 			if (ph->p_type == PT_PHDR)
 			{
 				executable_load_address =
 					/* actual addr of phdrs minus their vaddr */
-					(uintptr_t) ctxt->phdr_ent->a_un.a_val - ph->p_vaddr;
+					(uintptr_t) ctxt->phdr_auxv_ent->a_un.a_val - ph->p_vaddr;
 				break;
 			}
 		}

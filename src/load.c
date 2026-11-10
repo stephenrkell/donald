@@ -36,6 +36,55 @@ const char *get_loadee_path(struct load_ctxt *ctxt)
 	if (ctxt->argc <= argv_program_ind) { die("no program specified\n"); }
 	return ctxt->argv[argv_program_ind];
 }
+ 
+/* Helper that figures out the pathname (possibly relative) of our binary. */
+__attribute__((visibility("hidden")))
+const char *get_loader_path(struct load_ctxt *ctxt)
+{
+	/* PROBLEM: chain loaders may destructively update argv[0] to cover their tracks.
+	 * So we have to copy the argv pointer earlier.
+	 */
+	if (ctxt->we_are_the_program)
+	{
+		/* PROBLEM: this might be relative. Can we absolutify it?
+		 * We have code for this in __hook_pre_enter. I think the
+		 * reason for the split was that it has to allocate. Indeed
+		 * the comment above makes clear that it's OK for *us* to
+		 * return a relative path.
+		 *
+		 * Note the "might be relative" was written when we use argv0_at_startup
+		 * not execfn. Not clear whether the kernel ever uses relative paths here.
+		 * It definitely does use non-canonical paths, though. */
+		return ctxt->execfn;
+	}
+	/* We want the interp string of the executable, because that's what names us.
+	 * How can we get to it? We have the executable's phdrs, so look for PT_INTERP. */
+	ElfW(Phdr) *phdrs = (void*) ctxt->phdr_auxv_ent->a_un.a_val;
+	ElfW(Phdr) *found_pt_phdr = NULL;
+	ElfW(Phdr) *found_pt_interp = NULL;
+	for (unsigned n = 0; n < ctxt->phnum_auxv_ent->a_un.a_val; ++n)
+	{
+		if (phdrs[n].p_type == PT_PHDR)
+		{
+			found_pt_phdr = &phdrs[n];
+		}
+		if (phdrs[n].p_type == PT_INTERP)
+		{
+			found_pt_interp = &phdrs[n];
+		}
+	}
+	if (!(found_pt_phdr && found_pt_interp))
+	{
+		/* That's an error: we were requested, but no way to find out
+		 * at what path we were requested. */
+		die("requested as interpreter, but can't discover the requested path\n");
+	}
+	void *base_addr = (void*)((uintptr_t) found_pt_phdr - found_pt_phdr->p_vaddr);
+	char *interp_string = (char*)((uintptr_t) base_addr + found_pt_interp->p_vaddr);
+	// the interp string can't be relative, can it?
+	assert(interp_string[0] == '/');
+	return interp_string;
+}
 
 /* Helper that tells us where we should hint mmap() to map the executable
  * segments, i.e. relative to the returned base address. Again, wrapping this
@@ -197,6 +246,7 @@ load_from_fd(int loadee_fd, const char *loadee_path /* for diagnostic only */,
 	loadee.phdrs_addr = 0;
 	loadee.dynamic = NULL;
 	loadee.dynamic_size = 0;
+	loadee.max_vaddr = 0;
 	if (out_phdrs)
 	{
 		assert(p_n_out_phdrs);
@@ -207,6 +257,9 @@ load_from_fd(int loadee_fd, const char *loadee_path /* for diagnostic only */,
 	{
 		if (phdrs[i].p_type == PT_LOAD)
 		{
+			uintptr_t this_phdr_max_vaddr = phdrs[i].p_vaddr + phdrs[i].p_memsz;
+			if (this_phdr_max_vaddr > loadee.max_vaddr) loadee.max_vaddr = this_phdr_max_vaddr;
+
 			_Bool read = (phdrs[i].p_flags & PF_R);
 			_Bool write = (phdrs[i].p_flags & PF_W);
 			_Bool exec = (phdrs[i].p_flags & PF_X);

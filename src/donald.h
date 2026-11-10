@@ -52,7 +52,7 @@
 #endif
 #endif
 
-extern int _begin; // defined by linker script; if used, we need it, so non-weak
+extern char _begin[]; // defined by linker script; if used, we need it, so non-weak
 extern char **environ HIDDEN;
 extern ElfW(Dyn) *p_dyn HIDDEN;
 extern ElfW(auxv_t) *p_auxv HIDDEN;
@@ -70,6 +70,7 @@ struct loadee_info
 	ElfW(Ehdr) ehdr;
 	ElfW(Dyn)* dynamic;
 	size_t dynamic_size;
+	uintptr_t max_vaddr;
 	char errmsg[400];
 };
 
@@ -80,20 +81,26 @@ struct load_ctxt
 {
 	int argc;
 	char **argv;
+	char *argv0_at_startup; // chain loaders may overwrite argv[0], so snarf this separately
+	char *execfn;           // argv[0] is not that definitive anyway; what was AT_EXECFN at startup?
 	int argv_program_ind;         // used to get loadee_path, but our callee might want it
 	uintptr_t entry;              // from AT_ENTRY / does NOT duplicate inferior_entry_point: this is &_start by default, overridden by AT_ENTRY, in either invoked or requested cases; if invoked, AT_ENTRY matches &_start and this is how we detect it
 	_Bool we_are_the_program;
+	ElfW(Phdr) *our_phdrs;        // FIXME: populate these
+	unsigned our_nphdr;
 	uintptr_t our_load_address;
-	ElfW(auxv_t) *phdr_ent;       // XXX: whose phdrs are these? if from AT_PHDR, "program headers for program" -- what about in invoked vs requested cases?
-	ElfW(auxv_t) *phnum_ent;
-	ElfW(Phdr) phdrs[MAX_LDSO_PHDR];
+	ElfW(auxv_t) *phdr_auxv_ent;      // whose phdrs are these? they are from AT_PHDR, "program headers for program", so... if requested, they are of the requesting executable, or of us if invoked
+	ElfW(auxv_t) *phnum_auxv_ent;
+	ElfW(Phdr) phdrs[MAX_LDSO_PHDR];  // by contrast, these are filled by load_file and are always the phdrs of what is loaded
 	unsigned n_phdrs;
 	const char *loadee_path;
 	uintptr_t loadee_base_addr_hint;
 	struct loadee_info *loadee;
 	uintptr_t loadee_entry_point;
 };
+extern struct load_ctxt load_ctxt; /* the thing wot we're loading */
 
+const char *get_loader_path(struct load_ctxt *ctxt) HIDDEN; // i.e. the path of donald
 const char *get_loadee_path(struct load_ctxt *ctxt) HIDDEN;
 uintptr_t get_loadee_base_addr_hint(struct load_ctxt *ctxt) HIDDEN;
 
