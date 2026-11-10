@@ -1,3 +1,5 @@
+.section .note.GNU-stack,"",@progbits
+
 .globl _start
 .text
 .align 16
